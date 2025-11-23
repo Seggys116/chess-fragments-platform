@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#9333ea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6b21a8;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Chess Knight piece -->
+  <path d="M32 8 L42 18 L38 28 L42 32 L40 38 L36 40 L36 48 L48 50 L48 56 L16 56 L16 50 L28 48 L28 40 L24 38 L22 32 L26 28 L22 18 Z" fill="url(#grad)"/>
+  <!-- Eye -->
+  <circle cx="28" cy="24" r="2" fill="#fff"/>
+  <!-- Grid lines for 5x5 board -->
+  <path d="M8 60 L56 60 M8 58 L56 58" stroke="#fff" stroke-width="0.5" opacity="0.3"/>
+</svg>

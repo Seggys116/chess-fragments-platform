@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+    <defs>
+        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#0f172a;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#1e293b;stop-opacity:1" />
+        </linearGradient>
+        <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#9333ea;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#6b21a8;stop-opacity:1" />
+        </linearGradient>
+        <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#e0e0e0;stop-opacity:1" />
+        </linearGradient>
+        <filter id="glow">
+            <feGaussianBlur stdDeviation="4" result="coloredBlur" />
+            <feMerge>
+                <feMergeNode in="coloredBlur" />
+                <feMergeNode in="SourceGraphic" />
+            </feMerge>
+        </filter>
+    </defs>
+
+    <!-- Background -->
+    <rect width="1200" height="630" fill="url(#bgGrad)" />
+
+    <!-- Decorative grid pattern -->
+    <g opacity="0.1">
+        <path
+            d="M 0 100 L 1200 100 M 0 200 L 1200 200 M 0 300 L 1200 300 M 0 400 L 1200 400 M 0 500 L 1200 500"
+            stroke="#9333ea" stroke-width="1" />
+        <path
+            d="M 100 0 L 100 630 M 200 0 L 200 630 M 300 0 L 300 630 M 400 0 L 400 630 M 500 0 L 500 630 M 600 0 L 600 630 M 700 0 L 700 630 M 800 0 L 800 630 M 900 0 L 900 630 M 1000 0 L 1000 630 M 1100 0 L 1100 630"
+            stroke="#9333ea" stroke-width="1" />
+    </g>
+
+    <!-- Slanted background element -->
+    <path d="M 0 150 L 850 100 L 900 500 L 0 550 Z" fill="url(#purpleGrad)" opacity="0.15"
+        transform="rotate(-5 450 315)" />
+
+    <!-- F Logo box (right side) replacing chess piece -->
+    <g transform="translate(920, 215) rotate(-3)">
+        <rect x="0" y="0" width="200" height="200" rx="24" fill="url(#purpleGrad)"
+            filter="url(#glow)" />
+        <text x="100" y="100" font-family="'Geist', 'Inter', sans-serif" font-size="140"
+            font-weight="700" fill="#ffffff" text-anchor="middle" dominant-baseline="central">F</text>
+    </g>
+
+    <!-- Text container with slant -->
+    <g transform="rotate(-3 400 315)">
+        <!-- Fragment text -->
+        <text x="150" y="280" font-family="'Geist', 'Inter', sans-serif" font-size="110"
+            font-weight="700" fill="url(#textGrad)" letter-spacing="-2">
+            Fragment
+        </text>
+
+        <!-- Arena text with purple gradient -->
+        <text x="150" y="400" font-family="'Geist', 'Inter', sans-serif" font-size="110"
+            font-weight="700" fill="url(#purpleGrad)" letter-spacing="-2">
+            Arena
+        </text>
+
+        <!-- Subtitle -->
+        <text x="150" y="460" font-family="'Geist', 'Inter', sans-serif" font-size="28"
+            font-weight="400" fill="#9ca3af" letter-spacing="0">
+            Chess Fragments AI Competition Platform
+        </text>
+    </g>
+
+    <!-- Accent lines -->
+    <path d="M 140 200 L 240 195" stroke="url(#purpleGrad)" stroke-width="4" stroke-linecap="round"
+        opacity="0.8" />
+    <path d="M 140 490 L 200 487" stroke="url(#purpleGrad)" stroke-width="4" stroke-linecap="round"
+        opacity="0.8" />
+
+    <!-- Small decorative chess board pattern -->
+    <g transform="translate(800, 450) scale(0.8)" opacity="0.3">
+        <rect x="0" y="0" width="40" height="40" fill="#9333ea" />
+        <rect x="40" y="0" width="40" height="40" fill="#1e293b" />
+        <rect x="80" y="0" width="40" height="40" fill="#9333ea" />
+        <rect x="120" y="0" width="40" height="40" fill="#1e293b" />
+        <rect x="160" y="0" width="40" height="40" fill="#9333ea" />
+        <rect x="0" y="40" width="40" height="40" fill="#1e293b" />
+        <rect x="40" y="40" width="40" height="40" fill="#9333ea" />
+        <rect x="80" y="40" width="40" height="40" fill="#1e293b" />
+        <rect x="120" y="40" width="40" height="40" fill="#9333ea" />
+        <rect x="160" y="40" width="40" height="40" fill="#1e293b" />
+    </g>
+</svg>

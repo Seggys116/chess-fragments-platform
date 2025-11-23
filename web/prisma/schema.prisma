@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String   @id @default(uuid())
+  accessCode        String   @unique @map("access_code")
+  hashedAccessCode  String?  @map("hashed_access_code") // For migration to hashed codes
+  createdAt         DateTime @default(now()) @map("created_at")
+  lastActive        DateTime @default(now()) @map("last_active")
+  uploadCount       Int      @default(0) @map("upload_count")
+  lastUploadAt      DateTime? @map("last_upload_at")
+
+  agents           Agent[]
+  uploadLogs       UploadLog[]
+  sessions         Session[]
+  validationQueue  ValidationQueue[]
+
+  @@map("users")
+}
+
+model Agent {
+  id                String   @id @default(uuid())
+  userId            String   @map("user_id")
+  name              String
+  version           Int
+  codeText          String   @map("code_text")
+  codeHash          String   @map("code_hash")
+  importsValid      Boolean  @default(false) @map("imports_valid")
+  analysisResult    Json?    @map("analysis_result")
+  validationStatus  String   @default("pending") @map("validation_status") // pending, passed, failed
+  validationError   String?  @map("validation_error")
+  active            Boolean  @default(false)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  // Local execution support
+  executionMode     String   @default("server") @map("execution_mode") // server, local
+  connectionToken   String?  @unique @map("connection_token") // Encrypted token for local agents
+
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ranking           Ranking?
+  whiteMatches      Match[]           @relation("WhiteAgent")
+  blackMatches      Match[]           @relation("BlackAgent")
+  validationQueue   ValidationQueue[]
+  localConnections  LocalAgentConnection[]
+
+  @@unique([userId, name, version])
+  @@map("agents")
+}
+
+model LocalAgentConnection {
+  id                String    @id @default(uuid())
+  agentId           String    @map("agent_id")
+  connectionType    String    @map("connection_type") // p2p, websocket
+  status            String    @default("disconnected") // connected, disconnected, in_game
+  lastHeartbeat     DateTime? @map("last_heartbeat")
+  connectedAt       DateTime? @map("connected_at")
+  disconnectedAt    DateTime? @map("disconnected_at")
+  ipAddress         String?   @map("ip_address")
+  connectionData    Json?     @map("connection_data") // P2P peer info or WebSocket session
+
+  agent             Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([status])
+  @@map("local_agent_connections")
+}
+
+model Match {
+  id             String    @id @default(uuid())
+  whiteAgentId   String    @map("white_agent_id")
+  blackAgentId   String    @map("black_agent_id")
+  status         String    @default("pending")
+  matchType      String    @default("matchmaking") @map("match_type")
+  spectatorCount Int       @default(0) @map("spectator_count")
+  winner         String?
+  moves          Int       @default(0)
+  termination    String?
+  startedAt      DateTime? @map("started_at")
+  completedAt    DateTime? @map("completed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  whiteAgent     Agent      @relation("WhiteAgent", fields: [whiteAgentId], references: [id], onDelete: Cascade)
+  blackAgent     Agent      @relation("BlackAgent", fields: [blackAgentId], references: [id], onDelete: Cascade)
+  gameStates     GameState[]
+
+  @@map("matches")
+}
+
+model GameState {
+  id            String   @id @default(uuid())
+  matchId       String   @map("match_id")
+  moveNumber    Int      @map("move_number")
+  boardState    Json     @map("board_state")
+  evaluation    Float?
+  moveTimeMs    Int?     @map("move_time_ms")
+  moveNotation  String?  @map("move_notation")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  match         Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, moveNumber])
+  @@map("game_states")
+}
+
+model Ranking {
+  id             String   @id @default(uuid())
+  agentId        String   @unique @map("agent_id")
+  eloRating      Int      @default(1500) @map("elo_rating")
+  gamesPlayed    Int      @default(0) @map("games_played")
+  wins           Int      @default(0)
+  losses         Int      @default(0)
+  draws          Int      @default(0)
+  avgMoveTimeMs  Int?     @map("avg_move_time_ms")
+  lastUpdated    DateTime @default(now()) @map("last_updated")
+
+  agent          Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@map("rankings")
+}
+
+model UploadLog {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  ipAddress     String?  @map("ip_address")
+  uploadedAt    DateTime @default(now()) @map("uploaded_at")
+  codeHash      String?  @map("code_hash")
+  success       Boolean
+  errorMessage  String?  @map("error_message")
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("upload_logs")
+}
+
+model Session {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  refreshToken  String   @unique @map("refresh_token") // Hashed version
+  expiresAt     DateTime @map("expires_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  lastUsed      DateTime @default(now()) @map("last_used")
+  ipAddress     String?  @map("ip_address")
+  userAgent     String?  @map("user_agent")
+  revoked       Boolean  @default(false)
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model ValidationQueue {
+  id              String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  agentId         String?   @map("agent_id")
+  userId          String    @map("user_id")
+  code            String    @db.Text // NEVER returned in API responses
+  name            String
+  version         Int
+  codeHash        String    @map("code_hash")
+  status          String    @default("pending") // pending, testing, passed, failed
+  error           String?   @db.Text // Sanitized error message only
+  testDurationMs  Int?      @map("test_duration_ms")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  startedAt       DateTime? @map("started_at")
+  completedAt     DateTime? @map("completed_at")
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent           Agent?    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("validation_queue")
+}

@@ -1,0 +1,405 @@
+"""
+Hybrid Match Executor - Runs matches with local and/or server agents
+
+Handles all combinations:
+- local vs local
+- local vs server
+- server vs server
+"""
+import sys
+import os
+import types
+import random
+from pathlib import Path
+from itertools import cycle
+
+# Add shared directory to Python path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'shared'))
+
+from chessmaker.chess.base import Board, Player
+from extension.board_utils import copy_piece_move, list_legal_moves_for
+from extension.board_rules import get_result
+from samples import white, black
+from constants import get_default_agent_var
+from sandbox.hybrid_executor import AgentDisconnectedError, LocalAgentBridge, get_agent_move, clear_game_state, add_move_to_history
+
+# Agent timeout in seconds - read from environment
+AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
+# Add buffer for network/system overhead when checking timeouts
+TIMEOUT_CHECK_BUFFER = 0.5
+
+
+def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_name,
+                     black_agent_id, black_code, black_execution_mode, black_name,
+                     board_sample, match_id):
+    """
+    Run a match between two agents (local and/or server)
+
+    Returns same format as run_match_local:
+        {
+            'winner': 'white' | 'black' | 'draw' | None,
+            'moves': int,
+            'termination': str,
+            'game_states': List[dict]
+        }
+    """
+
+    # Notify local agents that game is starting
+    bridge = LocalAgentBridge()
+    if white_execution_mode == 'local':
+        bridge.notify_game_start(white_agent_id, match_id, white_name, black_name)
+    if black_execution_mode == 'local':
+        bridge.notify_game_start(black_agent_id, match_id, white_name, black_name)
+
+    # Setup extension module for server agents
+    import sys as _sys
+    from extension import board_utils, board_rules
+    if 'extension' not in _sys.modules:
+        extension_module = types.ModuleType('extension')
+        extension_module.board_utils = board_utils
+        extension_module.board_rules = board_rules
+        _sys.modules['extension'] = extension_module
+
+    # Load server agent code if needed
+    white_agent_func = None
+    black_agent_func = None
+
+    if white_execution_mode == 'server':
+        white_module = types.ModuleType('white_agent')
+        try:
+            exec(white_code, white_module.__dict__)
+            if 'agent' not in white_module.__dict__:
+                return {
+                    'winner': 'black',
+                    'moves': 0,
+                    'termination': 'error',
+                    'error': 'White agent code does not define an "agent" function',
+                    'game_states': []
+                }
+            white_agent_func = white_module.__dict__['agent']
+        except Exception as e:
+            import traceback
+            return {
+                'winner': 'black',
+                'moves': 0,
+                'termination': 'error',
+                'error': f'Failed to load white agent code: {str(e)}\n{traceback.format_exc()}',
+                'game_states': []
+            }
+
+    if black_execution_mode == 'server':
+        black_module = types.ModuleType('black_agent')
+        try:
+            exec(black_code, black_module.__dict__)
+            if 'agent' not in black_module.__dict__:
+                return {
+                    'winner': 'white',
+                    'moves': 0,
+                    'termination': 'error',
+                    'error': 'Black agent code does not define an "agent" function',
+                    'game_states': []
+                }
+            black_agent_func = black_module.__dict__['agent']
+        except Exception as e:
+            import traceback
+            return {
+                'winner': 'white',
+                'moves': 0,
+                'termination': 'error',
+                'error': f'Failed to load black agent code: {str(e)}\n{traceback.format_exc()}',
+                'game_states': []
+            }
+
+    # Create board
+    players = [white, black]
+    board = Board(
+        squares=board_sample,
+        players=players,
+        turn_iterator=cycle(players),
+    )
+
+    turn_order = cycle(players)
+    moves = 0
+    max_moves = 500
+    game_states = []
+    result = None
+
+    # Initialize per-agent vars - maintains ply count for each agent
+    white_ply = 1
+    black_ply = 1
+
+    while moves < max_moves:
+        try:
+            player = next(turn_order)
+            moves += 1
+
+            # Get legal moves
+            legal_moves = list_legal_moves_for(board, player)
+            print(f"Move {moves}, {player.name} turn: {len(legal_moves)} legal moves available")
+
+            if not legal_moves:
+                # No legal moves - player loses
+                winner = "black" if player.name == "white" else "white"
+                print(f"{player.name} has no legal moves available")
+                result = {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': 'no_moves',
+                    'game_states': game_states
+                }
+                break
+
+            # Get move from appropriate agent type
+            p_piece = None
+            p_move_opt = None
+            move_time_ms = 0
+            timed_out = False
+
+            if player.name == "white":
+                print(f"[HYRBIDF] request move match={match_id} move={moves} player=white exec={white_execution_mode} agent={white_agent_id}", flush=True)
+                # White agent's turn
+                try:
+                    piece, move, elapsed = get_agent_move(
+                        agent_code=white_code if white_execution_mode == 'server' else None,
+                        agent_id=white_agent_id,
+                        execution_mode=white_execution_mode,
+                        board=board,
+                        player=player,
+                        var=[white_ply, AGENT_TIMEOUT_SECONDS],
+                        game_id=match_id
+                    )
+                    white_ply += 1
+                except AgentDisconnectedError as e:
+                    print(f"[HYRBIDF] white-disconnect match={match_id} move={moves} agent={white_agent_id} reason={e.reason}", flush=True)
+                    result = {
+                        'winner': None,
+                        'moves': 0,
+                        'termination': 'cancelled',
+                        'error': e.reason,
+                        'game_states': []
+                    }
+                    break
+                p_piece = piece
+                p_move_opt = move
+                move_time_ms = elapsed * 1000  # Convert to ms
+                # Use > instead of >= and add buffer to prevent false positives from network/system overhead
+                timed_out = (elapsed > AGENT_TIMEOUT_SECONDS + TIMEOUT_CHECK_BUFFER)
+
+                if timed_out:
+                    print(f"White agent ({white_execution_mode}) TIMEOUT on move {moves} (elapsed: {elapsed:.3f}s)")
+                else:
+                    if piece and getattr(piece, "position", None):
+                        piece_pos = f"{piece.position.x},{piece.position.y}"
+                    else:
+                        piece_pos = None
+                    move_target = getattr(move, "position", None)
+                    if move_target:
+                        move_pos = f"{move_target.x},{move_target.y}"
+                    else:
+                        move_pos = None
+                    print(f"[HYRBIDF] response match={match_id} move={moves} player=white piece={type(piece).__name__ if piece else None} from={piece_pos} to={move_pos} elapsed={elapsed:.3f}s", flush=True)
+            else:
+                print(f"[HYRBIDF] request move match={match_id} move={moves} player=black exec={black_execution_mode} agent={black_agent_id}", flush=True)
+                # Black agent's turn
+                try:
+                    piece, move, elapsed = get_agent_move(
+                        agent_code=black_code if black_execution_mode == 'server' else None,
+                        agent_id=black_agent_id,
+                        execution_mode=black_execution_mode,
+                        board=board,
+                        player=player,
+                        var=[black_ply, AGENT_TIMEOUT_SECONDS],
+                        game_id=match_id
+                    )
+                    black_ply += 1
+                except AgentDisconnectedError as e:
+                    print(f"[HYRBIDF] black-disconnect match={match_id} move={moves} agent={black_agent_id} reason={e.reason}", flush=True)
+                    result = {
+                        'winner': None,
+                        'moves': 0,
+                        'termination': 'cancelled',
+                        'error': e.reason,
+                        'game_states': []
+                    }
+                    break
+                p_piece = piece
+                p_move_opt = move
+                move_time_ms = elapsed * 1000  # Convert to ms
+                # Use > instead of >= and add buffer to prevent false positives from network/system overhead
+                timed_out = (elapsed > AGENT_TIMEOUT_SECONDS + TIMEOUT_CHECK_BUFFER)
+
+                if timed_out:
+                    print(f"Black agent ({black_execution_mode}) TIMEOUT on move {moves} (elapsed: {elapsed:.3f}s)")
+                else:
+                    if piece and getattr(piece, "position", None):
+                        piece_pos = f"{piece.position.x},{piece.position.y}"
+                    else:
+                        piece_pos = None
+                    move_target = getattr(move, "position", None)
+                    if move_target:
+                        move_pos = f"{move_target.x},{move_target.y}"
+                    else:
+                        move_pos = None
+                    print(f"[HYRBIDF] response match={match_id} move={moves} player=black piece={type(piece).__name__ if piece else None} from={piece_pos} to={move_pos} elapsed={elapsed:.3f}s", flush=True)
+
+            # Handle timeout or invalid move with random selection
+            if timed_out or not p_piece or not p_move_opt:
+                if legal_moves:
+                    random_piece, random_move = random.choice(legal_moves)
+                    p_piece, p_move_opt = random_piece, random_move
+                    reason = "timeout" if timed_out else "invalid move"
+                    print(f"{player.name} {reason} - selected random move")
+                else:
+                    winner = "black" if player.name == "white" else "white"
+                    result = {
+                        'winner': winner,
+                        'moves': moves,
+                        'termination': 'no_moves',
+                        'game_states': game_states
+                    }
+                    break
+
+            # Copy and execute move
+            board, piece, move_opt = copy_piece_move(board, p_piece, p_move_opt)
+
+            if not piece or not move_opt:
+                # copy_piece_move failed - move was invalid, use random fallback
+                print(f"{player.name} returned move that failed validation - selecting random move")
+                if legal_moves:
+                    random_piece, random_move = random.choice(legal_moves)
+                    p_piece, p_move_opt = random_piece, random_move
+                    board, piece, move_opt = copy_piece_move(board, p_piece, p_move_opt)
+
+                    if not piece or not move_opt:
+                        # Even random move failed - this should never happen but handle it
+                        winner = "black" if player.name == "white" else "white"
+                        print(f"CRITICAL: Random move also failed for {player.name}")
+                        result = {
+                            'winner': winner,
+                            'moves': moves,
+                            'termination': 'error',
+                            'error': f'{player.name} - critical error: random move failed',
+                            'game_states': game_states
+                        }
+                        break
+                else:
+                    # No legal moves available
+                    winner = "black" if player.name == "white" else "white"
+                    result = {
+                        'winner': winner,
+                        'moves': moves,
+                        'termination': 'no_moves',
+                        'game_states': game_states
+                    }
+                    break
+
+            # Capture original position before applying move
+            from_x = piece.position.x
+            from_y = piece.position.y
+            to_x = move_opt.position.x
+            to_y = move_opt.position.y
+            piece_type = type(piece).__name__
+
+            # Apply move to board
+            piece.move(move_opt)
+
+            # Add move to history AFTER it's applied so next player sees current state
+            add_move_to_history(match_id, from_x, from_y, to_x, to_y, piece_type)
+
+            # Record game state
+            try:
+                if piece and piece.position:
+                    notation = f"{piece.name}({piece.position.x},{piece.position.y})"
+                else:
+                    notation = f"{p_piece.name if p_piece else 'Unknown'}(?,?)"
+            except:
+                notation = "Invalid"
+
+            # Serialize board state
+            board_state = serialize_board(board)
+
+            game_states.append({
+                'move_number': moves,
+                'board_state': board_state,
+                'move_time_ms': int(move_time_ms),
+                'notation': notation,
+            })
+
+            # Check for checkmate/stalemate on next player's turn
+            # We already called next(turn_order) at the start of the loop for the current player
+            # The iterator is already pointing to the next player, so don't call next() again
+            # Just check if the opponent (who just played) left them with legal moves
+            next_player = black if player.name == "white" else white
+            next_legal_moves = list_legal_moves_for(board, next_player)
+
+            if not next_legal_moves:
+                # Game over - next player has no moves
+                # Use get_result to determine if it's checkmate or stalemate
+                game_result = get_result(board)
+                winner = "white" if next_player.name == "black" else "black"
+
+                # Determine termination type based on game result
+                if game_result and 'Stalemate' in game_result:
+                    termination = 'stalemate'
+                elif game_result and 'Checkmate' in game_result:
+                    termination = 'checkmate'
+                else:
+                    # Fallback - assume checkmate if can't determine
+                    termination = 'checkmate'
+
+                result = {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': termination,
+                    'game_states': game_states
+                }
+                break
+
+            # turn_order will automatically advance to next player in next loop iteration
+
+        except Exception as e:
+            import traceback
+            print(f"Error during move {moves}: {e}\n{traceback.format_exc()}")
+            winner = "black" if player.name == "white" else "white"
+            result = {
+                'winner': winner,
+                'moves': moves,
+                'termination': 'error',
+                'error': str(e),
+                'game_states': game_states
+            }
+            break
+    else:
+        # Max moves reached
+        result = {
+            'winner': 'draw',
+            'moves': moves,
+            'termination': 'max_moves',
+            'game_states': game_states
+        }
+
+    # Notify local agents of game end
+    if white_execution_mode == 'local':
+        bridge.notify_game_end(white_agent_id, match_id, result.get('termination'), result.get('winner'))
+    if black_execution_mode == 'local':
+        bridge.notify_game_end(black_agent_id, match_id, result.get('termination'), result.get('winner'))
+
+    bridge.close()
+
+    # Clear game state cache
+    clear_game_state(match_id)
+
+    return result
+
+
+def serialize_board(board):
+    """Serialize board state"""
+    pieces = []
+    for piece in board.get_pieces():
+        pieces.append({
+            'type': type(piece).__name__,
+            'player': piece.player.name,
+            'x': piece.position.x,
+            'y': piece.position.y,
+        })
+    return {'pieces': pieces}

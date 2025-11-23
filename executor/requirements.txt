@@ -1,0 +1,6 @@
+celery[redis]==5.3.4
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+chessmaker
+docker==7.0.0
+pytest==8.3.4

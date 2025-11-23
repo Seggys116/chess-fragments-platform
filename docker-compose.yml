@@ -1,0 +1,308 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fragmentarena-db
+    ports:
+      - "5295:5432"
+    environment:
+      POSTGRES_DB: fragmentarena
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_dev_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: fragmentarena-redis
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  haproxy:
+    build:
+      context: ./haproxy
+      dockerfile: Dockerfile
+    container_name: fragmentarena-haproxy
+    ports:
+      - "3892:3000"
+    networks:
+      - internal
+      - external
+    depends_on:
+      - web
+      - local-agent-server
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: fragmentarena-web
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: ${NODE_ENV:-development}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev_secret_change_in_production}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+
+      # JWT Configuration
+      JWT_SECRET: ${JWT_SECRET:-${NEXTAUTH_SECRET:-dev_jwt_secret_change_in_production}}
+
+      # Rate Limiting
+      UPLOAD_RATE_LIMIT_REQUESTS: ${UPLOAD_RATE_LIMIT_REQUESTS:-1}
+      UPLOAD_RATE_LIMIT_HOURS: ${UPLOAD_RATE_LIMIT_HOURS:-1}
+      GLOBAL_RATE_LIMIT_PER_MINUTE: ${GLOBAL_RATE_LIMIT_PER_MINUTE:-100}
+      IP_RATE_LIMIT_PER_MINUTE: ${IP_RATE_LIMIT_PER_MINUTE:-100}
+      IP_RATE_LIMIT_PER_HOUR: ${IP_RATE_LIMIT_PER_HOUR:-3000}
+      IP_RATE_LIMIT_PER_DAY: ${IP_RATE_LIMIT_PER_DAY:-50000}
+      USER_RATE_LIMIT_PER_MINUTE: ${USER_RATE_LIMIT_PER_MINUTE:-200}
+      USER_RATE_LIMIT_PER_HOUR: ${USER_RATE_LIMIT_PER_HOUR:-5000}
+      USER_RATE_LIMIT_PER_DAY: ${USER_RATE_LIMIT_PER_DAY:-100000}
+
+      # Agent Limits
+      MAX_AGENT_SIZE_BYTES: ${MAX_AGENT_SIZE_BYTES:-1073741824}
+      MAX_AGENTS_PER_USER: ${MAX_AGENTS_PER_USER:-10}
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
+      AGENT_MEMORY_LIMIT_MB: ${AGENT_MEMORY_LIMIT_MB:-512}
+
+      # Public environment variables (accessible to client-side Next.js)
+      NEXT_PUBLIC_AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
+
+      # Security Configuration
+      AUTO_BLOCK_ENABLED: ${AUTO_BLOCK_ENABLED:-true}
+      AUTO_BLOCK_THRESHOLD: ${AUTO_BLOCK_THRESHOLD:-10}
+      AUTO_BLOCK_DURATION: ${AUTO_BLOCK_DURATION:-3600000}
+      IP_BLOCKLIST: ${IP_BLOCKLIST}
+      IP_ALLOWLIST: ${IP_ALLOWLIST}
+
+      # Logging
+      LOG_REQUESTS: ${LOG_REQUESTS:-false}
+      LOG_RATE_LIMITS: ${LOG_RATE_LIMITS:-true}
+      LOG_AUTH_ATTEMPTS: ${LOG_AUTH_ATTEMPTS:-true}
+
+      # CORS
+      CORS_PRODUCTION_DOMAIN: ${CORS_PRODUCTION_DOMAIN:-https://chesscomp.zaknobleclarke.com}
+
+      # Authentication
+      SIGNUP_CODE: ${SIGNUP_CODE}
+      BETA_CODE: ${BETA_CODE}
+    networks:
+      - internal
+      - external
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  executor:
+    build:
+      context: .
+      dockerfile: ./executor/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
+      REDIS_URL: redis://redis:6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+      # Agent execution limits
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
+      AGENT_MEMORY_LIMIT_MB: ${AGENT_MEMORY_LIMIT_MB:-512}
+    networks:
+      - internal # Only internal network - NO internet access
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # For spawning agent containers
+    command: celery -A worker worker --loglevel=info --concurrency=8 --pool=threads
+    deploy:
+      replicas: 4
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: ./executor/Dockerfile
+    container_name: fragmentarena-beat
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
+      REDIS_URL: redis://redis:6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+      # Agent execution limits (for scheduled match runs)
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
+      AGENT_MEMORY_LIMIT_MB: ${AGENT_MEMORY_LIMIT_MB:-512}
+    networks:
+      - internal # Only internal network - NO internet access
+    depends_on:
+      - redis
+      - postgres
+    command: celery -A worker beat --loglevel=info
+
+  validator:
+    build:
+      context: .
+      dockerfile: ./validator/Dockerfile
+    container_name: fragmentarena-validator
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
+      PYTHONUNBUFFERED: 1
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
+    networks:
+      - internal # Only internal network - NO internet access
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    # Security: tmpfs for non-persistent filesystem
+    tmpfs:
+      - /tmp:mode=1777,size=512m,noexec,nosuid,nodev
+    # Resource limits
+    mem_limit: 512m
+    cpus: 1.0
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    read_only: true
+    # Note: /tmp is writable via tmpfs mount above (non-persistent)
+
+  local-agent-server:
+    build:
+      context: .
+      dockerfile: ./executor/Dockerfile.localagent
+    container_name: fragmentarena-localagent
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-${NEXTAUTH_SECRET:-dev_jwt_secret_change_in_production}}
+      WS_PORT: 9002
+      PYTHONUNBUFFERED: 1
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
+
+      # Rate limiting for connections
+      MAX_CONNECTIONS_PER_IP: ${MAX_CONNECTIONS_PER_IP:-5}
+      CONNECTION_RATE_LIMIT: ${CONNECTION_RATE_LIMIT:-10} # connections per minute
+    networks:
+      - internal # Only internal - proxied through web container
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+    # Security: tmpfs for non-persistent filesystem
+    tmpfs:
+      - /tmp:mode=1777,size=256m,noexec,nosuid,nodev
+
+    # Resource limits (lighter than executor)
+    mem_limit: 256m
+    cpus: 0.5
+
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # Health check
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c ''import socket; s = socket.socket(); s.connect(("localhost", 9002)); s.close()'' || exit 1',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  local-agent-tcp:
+    build:
+      context: .
+      dockerfile: ./executor/Dockerfile.localagent
+    container_name: fragmentarena-tcp
+    ports:
+      - "9000:9000"  # Direct P2P TCP port
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
+      REDIS_URL: redis://redis:6379
+      PYTHONUNBUFFERED: 1
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
+    networks:
+      - internal
+      - external  # Needs external for direct P2P connections
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    command: python3 local_agent_tcp_server.py
+
+    # Security: tmpfs for non-persistent filesystem
+    tmpfs:
+      - /tmp:mode=1777,size=256m,noexec,nosuid,nodev
+
+    # Resource limits
+    mem_limit: 256m
+    cpus: 0.5
+
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # Health check
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c ''import socket; s = socket.socket(); s.connect(("localhost", 9000)); s.close()'' || exit 1',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  # Internal network - no internet access
+  internal:
+    driver: bridge
+    internal: true # This prevents routing to external networks
+    name: fragmentarena-internal
+
+  # External network - internet access for web service only
+  external:
+    driver: bridge
+    name: fragmentarena-external

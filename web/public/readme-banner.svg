@@ -1,0 +1,75 @@
+<svg width="1200" height="300" viewBox="0 0 1200 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Dark gradient background -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1e293b;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Purple gradient for accents -->
+    <linearGradient id="purpleGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#9333ea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6b21a8;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Text gradient -->
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e2e8f0;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Glow filter -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Grid pattern -->
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+    </pattern>
+
+    <!-- Chess board pattern -->
+    <pattern id="chessPattern" width="30" height="30" patternUnits="userSpaceOnUse">
+      <rect width="15" height="15" fill="rgba(147,51,234,0.1)"/>
+      <rect x="15" y="15" width="15" height="15" fill="rgba(147,51,234,0.1)"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="300" fill="url(#bgGradient)"/>
+
+  <!-- Grid overlay -->
+  <rect width="1200" height="300" fill="url(#grid)"/>
+
+  <!-- Slanted decorative elements -->
+  <rect x="-100" y="50" width="400" height="200" fill="rgba(147,51,234,0.08)" transform="rotate(-3 100 150)"/>
+  <rect x="900" y="0" width="400" height="250" fill="rgba(107,33,168,0.08)" transform="rotate(-5 1100 125)"/>
+
+  <!-- Chess pattern decoration -->
+  <rect x="850" y="50" width="200" height="200" fill="url(#chessPattern)" opacity="0.3" transform="rotate(-5 950 150)"/>
+
+  <!-- Large "F" logo with background -->
+  <g transform="translate(80, 75)">
+    <rect width="150" height="150" rx="8" fill="url(#purpleGradient)" filter="url(#glow)"/>
+    <text x="75" y="115" font-family="'Geist', 'Inter', sans-serif" font-size="120" font-weight="700" fill="#ffffff" text-anchor="middle">F</text>
+  </g>
+
+  <!-- Main title -->
+  <g transform="translate(250, 0)">
+    <!-- "Fragment" in white/gray gradient -->
+    <text x="0" y="120" font-family="'Geist', 'Inter', sans-serif" font-size="72" font-weight="700" letter-spacing="-2" fill="url(#textGradient)">Fragment</text>
+
+    <!-- "Arena" in purple gradient -->
+    <text x="0" y="190" font-family="'Geist', 'Inter', sans-serif" font-size="72" font-weight="700" letter-spacing="-2" fill="url(#purpleGradient)">Arena</text>
+  </g>
+
+  <!-- Subtitle -->
+  <text x="250" y="230" font-family="'Geist', 'Inter', sans-serif" font-size="20" font-weight="400" fill="#9ca3af">Chess Fragments AI Competition Platform</text>
+
+  <!-- Accent line -->
+  <line x1="250" y1="245" x2="450" y2="245" stroke="url(#purpleGradient)" stroke-width="3" opacity="0.6"/>
+</svg>

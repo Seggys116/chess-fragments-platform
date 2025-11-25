@@ -313,7 +313,9 @@ def run_match_task(match_id: str):
             schedule_round_robin.delay()
 
     except Exception as e:
-        print(f"Error running match {match_id}: {e}")
+        import traceback
+        print(f"[MATCH_RUNNER] SYSTEM_ERROR for match {match_id}: {e}")
+        print(f"[MATCH_RUNNER] Traceback: {traceback.format_exc()}")
         # Rollback the transaction first to clear any error state
         conn.rollback()
 
@@ -325,8 +327,9 @@ def run_match_task(match_id: str):
                 WHERE id = %s
             """, (match_id,))
             conn.commit()
+            print(f"[MATCH_RUNNER] Marked match {match_id} as system_error")
         except Exception as update_error:
-            print(f"Failed to update match status to error: {update_error}")
+            print(f"[MATCH_RUNNER] Failed to update match status to error: {update_error}")
             conn.rollback()
 
     finally:
@@ -639,7 +642,7 @@ def cleanup_stuck_matches():
             """, (match_ids,))
             conn.commit()
 
-            print(f"Cleaned up {len(stuck_matches)} stuck matches: {match_ids}")
+            print(f"[MATCH_RUNNER] STUCK_TIMEOUT: Cleaned up {len(stuck_matches)} stuck matches: {match_ids}")
 
             # Trigger rescheduling if any matchmaking games were cleaned up
             if any(m['match_type'] == 'matchmaking' for m in stuck_matches):

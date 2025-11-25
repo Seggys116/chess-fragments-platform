@@ -25,18 +25,11 @@ from itertools import cycle
 from samples import white, black
 
 
-def is_king_in_check(board_squares, king_player):
+def is_king_in_check_on_board(board, king_player):
     """
-    Check if a king is under attack using direct piece attack detection.
+    Check if a king is under attack on an existing Board object.
     Returns True if the king is under attack.
     """
-    players = [white, black]
-    board = Board(
-        squares=board_squares,
-        players=players,
-        turn_iterator=cycle(players),
-    )
-
     # Find the king position
     king_pos = None
     for piece in board.get_pieces():
@@ -58,6 +51,21 @@ def is_king_in_check(board_squares, king_player):
                     return True
 
     return False
+
+
+def is_king_in_check(board_squares, king_player):
+    """
+    Check if a king is under attack using direct piece attack detection.
+    Takes board_squares (2D list) and creates a Board to check.
+    Returns True if the king is under attack.
+    """
+    players = [white, black]
+    board = Board(
+        squares=board_squares,
+        players=players,
+        turn_iterator=cycle(players),
+    )
+    return is_king_in_check_on_board(board, king_player)
 
 
 def has_mate_in_one(board_squares, player):
@@ -112,8 +120,8 @@ def has_check_in_one(board_squares, player):
 
         if piece_clone and move_clone:
             piece_clone.move(move_clone)
-            # Check if opponent's king is now in check
-            if is_king_in_check(board_clone.squares, opponent):
+            # Check if opponent's king is now in check (use board object directly)
+            if is_king_in_check_on_board(board_clone, opponent):
                 return True
 
     return False

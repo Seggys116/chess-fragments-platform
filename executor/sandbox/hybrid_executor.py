@@ -145,7 +145,7 @@ class LocalAgentBridge:
         self.pubsub.close()
 
 
-def get_agent_move(agent_code: Optional[str], agent_id: str, execution_mode: str, board, player, var, game_id: str):
+def get_agent_move(agent_code: Optional[str], agent_id: str, execution_mode: str, board, player, var, game_id: str, agent_func=None):
     """
     Get move from agent - supports both local and server execution
 
@@ -157,6 +157,7 @@ def get_agent_move(agent_code: Optional[str], agent_id: str, execution_mode: str
         player: Player object
         var: Additional variables
         game_id: Match/game ID
+        agent_func: Pre-loaded agent function (for server agents to preserve globals)
 
     Returns:
         Tuple of (piece, move, elapsed_time) or (None, None, elapsed_time) on error
@@ -201,13 +202,11 @@ def get_agent_move(agent_code: Optional[str], agent_id: str, execution_mode: str
             return (None, None, MOVE_TIMEOUT)
 
     else:
-        # Server execution - use existing local execution
-        # Note: agent_code is actually the agent function for server agents
-        # We need to load and execute it
-        import types
-        agent_module = types.ModuleType('temp_agent')
-        exec(agent_code, agent_module.__dict__)
-        agent_func = agent_module.__dict__['agent']
+        if agent_func is None:
+            import types
+            agent_module = types.ModuleType('temp_agent')
+            exec(agent_code, agent_module.__dict__)
+            agent_func = agent_module.__dict__['agent']
 
         from sandbox.agent_executor import execute_agent_with_timeout
         piece, move, time_ms, timed_out = execute_agent_with_timeout(
@@ -215,9 +214,9 @@ def get_agent_move(agent_code: Optional[str], agent_id: str, execution_mode: str
             board,
             player,
             AGENT_TIMEOUT_SECONDS,
-            get_default_agent_var(),
+            var,
         )
-        elapsed = time_ms / 1000.0 if time_ms else AGENT_TIMEOUT_SECONDS  # Convert ms to seconds
+        elapsed = time_ms / 1000.0 if time_ms else AGENT_TIMEOUT_SECONDS
         return (piece, move, elapsed)
 
 

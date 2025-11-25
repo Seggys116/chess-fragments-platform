@@ -110,7 +110,6 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                 'game_states': []
             }
 
-    # Create board
     players = [white, black]
     board = Board(
         squares=board_sample,
@@ -124,7 +123,6 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
     game_states = []
     result = None
 
-    # Initialize per-agent vars - maintains ply count for each agent
     white_ply = 1
     black_ply = 1
 
@@ -157,7 +155,6 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
 
             if player.name == "white":
                 print(f"[HYRBIDF] request move match={match_id} move={moves} player=white exec={white_execution_mode} agent={white_agent_id}", flush=True)
-                # White agent's turn
                 try:
                     piece, move, elapsed = get_agent_move(
                         agent_code=white_code if white_execution_mode == 'server' else None,
@@ -166,7 +163,8 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                         board=board,
                         player=player,
                         var=[white_ply, AGENT_TIMEOUT_SECONDS],
-                        game_id=match_id
+                        game_id=match_id,
+                        agent_func=white_agent_func
                     )
                     white_ply += 1
                 except AgentDisconnectedError as e:
@@ -200,7 +198,6 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                     print(f"[HYRBIDF] response match={match_id} move={moves} player=white piece={type(piece).__name__ if piece else None} from={piece_pos} to={move_pos} elapsed={elapsed:.3f}s", flush=True)
             else:
                 print(f"[HYRBIDF] request move match={match_id} move={moves} player=black exec={black_execution_mode} agent={black_agent_id}", flush=True)
-                # Black agent's turn
                 try:
                     piece, move, elapsed = get_agent_move(
                         agent_code=black_code if black_execution_mode == 'server' else None,
@@ -209,7 +206,8 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                         board=board,
                         player=player,
                         var=[black_ply, AGENT_TIMEOUT_SECONDS],
-                        game_id=match_id
+                        game_id=match_id,
+                        agent_func=black_agent_func
                     )
                     black_ply += 1
                 except AgentDisconnectedError as e:

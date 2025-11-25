@@ -412,8 +412,8 @@ def schedule_round_robin():
         current_local_vs_server = result['count'] if result else 0
 
         # Limits
-        MAX_SERVER_VS_SERVER = 8
-        MAX_LOCAL_VS_SERVER = 8
+        MAX_SERVER_VS_SERVER = 16
+        MAX_LOCAL_VS_SERVER = 16
 
         server_vs_server_full = current_server_vs_server >= MAX_SERVER_VS_SERVER
         local_vs_server_full = current_local_vs_server >= MAX_LOCAL_VS_SERVER
@@ -457,7 +457,7 @@ def schedule_round_robin():
                     a.execution_mode = 'local'
                     AND lac.status NOT IN ('draining', 'disconnected')
                     AND lac.last_heartbeat > NOW() - INTERVAL '30 seconds'
-                    AND COALESCE(am.active_count, 0) < 1
+                    AND COALESCE(am.active_count, 0) < 4
                 )
             )
             ORDER BY COALESCE(am.active_count, 0) ASC, RANDOM()

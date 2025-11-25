@@ -559,7 +559,18 @@ export default function LiveMatchPage() {
                          gameResult.winner === 'black' ? `${currentMatch.blackAgent.name} Wins!` :
                          'Draw!'}
                       </div>
-                      <div className="text-sm text-gray-400 capitalize">{gameResult.termination}</div>
+                      <div className={`text-sm capitalize ${
+                        gameResult.termination === 'white_error' || gameResult.termination === 'black_error' ||
+                        gameResult.termination === 'system_error' || gameResult.termination === 'stuck_timeout'
+                          ? 'text-red-400'
+                          : 'text-gray-400'
+                      }`}>
+                        {gameResult.termination === 'white_error' ? 'White threw error' :
+                         gameResult.termination === 'black_error' ? 'Black threw error' :
+                         gameResult.termination === 'system_error' ? 'System error' :
+                         gameResult.termination === 'stuck_timeout' ? 'Match timed out' :
+                         gameResult.termination.replace(/_/g, ' ')}
+                      </div>
                     </div>
                   )}
 

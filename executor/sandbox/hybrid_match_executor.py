@@ -69,20 +69,23 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
         try:
             exec(white_code, white_module.__dict__)
             if 'agent' not in white_module.__dict__:
+                print(f"[HYBRID] WHITE_ERROR: White agent missing 'agent' function")
                 return {
                     'winner': 'black',
                     'moves': 0,
-                    'termination': 'error',
+                    'termination': 'white_error',
                     'error': 'White agent code does not define an "agent" function',
                     'game_states': []
                 }
             white_agent_func = white_module.__dict__['agent']
         except Exception as e:
             import traceback
+            print(f"[HYBRID] WHITE_ERROR: Failed to load white agent: {e}")
+            print(f"[HYBRID] Traceback: {traceback.format_exc()}")
             return {
                 'winner': 'black',
                 'moves': 0,
-                'termination': 'error',
+                'termination': 'white_error',
                 'error': f'Failed to load white agent code: {str(e)}\n{traceback.format_exc()}',
                 'game_states': []
             }
@@ -92,20 +95,23 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
         try:
             exec(black_code, black_module.__dict__)
             if 'agent' not in black_module.__dict__:
+                print(f"[HYBRID] BLACK_ERROR: Black agent missing 'agent' function")
                 return {
                     'winner': 'white',
                     'moves': 0,
-                    'termination': 'error',
+                    'termination': 'black_error',
                     'error': 'Black agent code does not define an "agent" function',
                     'game_states': []
                 }
             black_agent_func = black_module.__dict__['agent']
         except Exception as e:
             import traceback
+            print(f"[HYBRID] BLACK_ERROR: Failed to load black agent: {e}")
+            print(f"[HYBRID] Traceback: {traceback.format_exc()}")
             return {
                 'winner': 'white',
                 'moves': 0,
-                'termination': 'error',
+                'termination': 'black_error',
                 'error': f'Failed to load black agent code: {str(e)}\n{traceback.format_exc()}',
                 'game_states': []
             }
@@ -282,11 +288,12 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                     if not piece or not move_opt:
                         # Even random move failed - this should never happen but handle it
                         winner = "black" if player.name == "white" else "white"
+                        termination = "white_error" if player.name == "white" else "black_error"
                         print(f"CRITICAL: Random move also failed for {player.name}")
                         result = {
                             'winner': winner,
                             'moves': moves,
-                            'termination': 'error',
+                            'termination': termination,
                             'error': f'{player.name} - critical error: random move failed',
                             'game_states': game_states
                         }
@@ -368,12 +375,14 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
 
         except Exception as e:
             import traceback
-            print(f"Error during move {moves}: {e}\n{traceback.format_exc()}")
             winner = "black" if player.name == "white" else "white"
+            termination = "white_error" if player.name == "white" else "black_error"
+            print(f"[HYBRID] {termination.upper()}: {player.name} agent error on move {moves}: {e}")
+            print(f"[HYBRID] Traceback: {traceback.format_exc()}")
             result = {
                 'winner': winner,
                 'moves': moves,
-                'termination': 'error',
+                'termination': termination,
                 'error': str(e),
                 'game_states': game_states
             }

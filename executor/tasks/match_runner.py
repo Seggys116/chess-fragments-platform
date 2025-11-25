@@ -216,7 +216,7 @@ def run_match_task(match_id: str):
 
         # Check if match ended in error with insufficient moves (< 2 per agent = < 4 total)
         # These games are meaningless and should be deleted entirely
-        is_error = result['termination'] in ('error', 'white_error', 'black_error')
+        is_error = result['termination'] in ('error', 'white_error', 'black_error', 'system_error', 'stuck_timeout')
         if is_error and result['moves'] < 4:
             error_msg = result.get('error', 'Unknown error during match execution')
             print(f"Match {match_id} ended in error with only {result['moves']} moves: {error_msg}")
@@ -318,10 +318,10 @@ def run_match_task(match_id: str):
         conn.rollback()
 
         try:
-            # Now try to update match status to error
+            # Now try to update match status to error with termination reason
             cur.execute("""
                 UPDATE matches
-                SET status = 'error', completed_at = NOW()
+                SET status = 'error', termination = 'system_error', completed_at = NOW()
                 WHERE id = %s
             """, (match_id,))
             conn.commit()
@@ -628,11 +628,12 @@ def cleanup_stuck_matches():
         stuck_matches = cur.fetchall()
 
         if stuck_matches:
-            # Update all stuck matches to error status
+            # Update all stuck matches to error status with termination reason
             match_ids = [m['id'] for m in stuck_matches]
             cur.execute("""
                 UPDATE matches
                 SET status = 'error',
+                    termination = 'stuck_timeout',
                     completed_at = NOW()
                 WHERE id = ANY(%s)
             """, (match_ids,))

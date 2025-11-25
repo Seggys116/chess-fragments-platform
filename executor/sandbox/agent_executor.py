@@ -100,6 +100,8 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
         exec(white_code, white_module.__dict__)
     except Exception as e:
         import traceback
+        print(f"[EXECUTOR] WHITE_ERROR: Failed to load white agent: {e}")
+        print(f"[EXECUTOR] Traceback: {traceback.format_exc()}")
         return {
             'winner': 'black',
             'moves': 0,
@@ -112,6 +114,8 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
         exec(black_code, black_module.__dict__)
     except Exception as e:
         import traceback
+        print(f"[EXECUTOR] BLACK_ERROR: Failed to load black agent: {e}")
+        print(f"[EXECUTOR] Traceback: {traceback.format_exc()}")
         return {
             'winner': 'white',
             'moves': 0,
@@ -122,6 +126,7 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
 
     # Extract agent functions
     if 'agent' not in white_module.__dict__:
+        print(f"[EXECUTOR] WHITE_ERROR: White agent missing 'agent' function")
         return {
             'winner': 'black',
             'moves': 0,
@@ -131,6 +136,7 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
         }
 
     if 'agent' not in black_module.__dict__:
+        print(f"[EXECUTOR] BLACK_ERROR: Black agent missing 'agent' function")
         return {
             'winner': 'white',
             'moves': 0,
@@ -246,11 +252,12 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
                     if (not piece) or (not move_opt):
                         # Even random move failed - this should never happen but handle it
                         winner = "black" if player.name == "white" else "white"
+                        termination = "white_error" if player.name == "white" else "black_error"
                         print(f"CRITICAL: Random move also failed for {player.name}")
                         return {
                             'winner': winner,
                             'moves': moves,
-                            'termination': 'error',
+                            'termination': termination,
                             'error': f'{player.name} - critical error: random move failed',
                             'game_states': game_states
                         }
@@ -332,8 +339,11 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
                 }
 
         except Exception as e:
+            import traceback
             winner = "black" if player.name == "white" else "white"
             termination = "white_error" if player.name == "white" else "black_error"
+            print(f"[EXECUTOR] {termination.upper()}: {player.name} agent error on move {moves}: {e}")
+            print(f"[EXECUTOR] Traceback: {traceback.format_exc()}")
             return {
                 'winner': winner,
                 'moves': moves,

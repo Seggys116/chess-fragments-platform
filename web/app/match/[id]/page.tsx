@@ -309,7 +309,18 @@ export default function MatchViewerPage() {
                   {match.termination && (
                     <div className="flex justify-between p-2 bg-gray-800/50 rounded">
                       <span className="text-gray-400">Result:</span>
-                      <span className="text-white font-semibold capitalize">{match.termination.replace(/_/g, ' ')}</span>
+                      <span className={`font-semibold capitalize ${
+                        match.termination === 'white_error' || match.termination === 'black_error' ||
+                        match.termination === 'system_error' || match.termination === 'stuck_timeout'
+                          ? 'text-red-400'
+                          : 'text-white'
+                      }`}>
+                        {match.termination === 'white_error' ? 'White threw error' :
+                         match.termination === 'black_error' ? 'Black threw error' :
+                         match.termination === 'system_error' ? 'System error' :
+                         match.termination === 'stuck_timeout' ? 'Match timed out' :
+                         match.termination.replace(/_/g, ' ')}
+                      </span>
                     </div>
                   )}
                   <div className="flex justify-between p-2 bg-gray-800/50 rounded">

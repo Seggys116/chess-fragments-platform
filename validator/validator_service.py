@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 sys.path.insert(0, '/app/shared')
-from samples import get_sample0
+from samples import get_sample0, get_sample1
 from constants import get_default_agent_var
 
 VALIDATION_TIMEOUT = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
@@ -79,46 +79,68 @@ def validate_agent_in_temp_env(code: str) -> tuple[bool, str | None, int]:
 
         agent_func = agent_module.__dict__['agent']
 
-        # Create test board
+        # Test on multiple board positions and as both colors
         from samples import white, black
-        board_squares = get_sample0()
-        players = [white, black]
-        board = Board(
-            squares=board_squares,
-            players=players,
-            turn_iterator=cycle(players),
-        )
 
-        # Execute agent with timeout
+        test_cases = [
+            (get_sample0(), white, "sample0 as white"),
+            (get_sample0(), black, "sample0 as black"),
+            (get_sample1(), white, "sample1 as white"),
+            (get_sample1(), black, "sample1 as black"),
+        ]
+
         executor = ThreadPoolExecutor(max_workers=1)
 
         try:
-            future = executor.submit(agent_func, board.clone(), white, get_default_agent_var())
-            result = future.result(timeout=VALIDATION_TIMEOUT)
+            for board_squares, player, test_name in test_cases:
+                print(f"[VALIDATOR] Testing {test_name}...")
+                players = [white, black]
+                board = Board(
+                    squares=board_squares,
+                    players=players,
+                    turn_iterator=cycle(players),
+                )
 
+                try:
+                    future = executor.submit(agent_func, board.clone(), player, get_default_agent_var())
+                    result = future.result(timeout=VALIDATION_TIMEOUT / 4)  # Split timeout across tests
+
+                    # Validate result format
+                    if result is None or not isinstance(result, tuple) or len(result) != 2:
+                        duration_ms = int((time.time() - start_time) * 1000)
+                        print(f"[VALIDATOR] FAILED {test_name}: Agent must return (piece, move) tuple")
+                        return False, f"Agent must return (piece, move) tuple (failed on {test_name})", duration_ms
+
+                    piece, move = result
+
+                    # Check if valid move when moves are available
+                    if piece is None and move is None:
+                        legal_moves = list_legal_moves_for(board, player)
+                        if len(legal_moves) > 0:
+                            duration_ms = int((time.time() - start_time) * 1000)
+                            print(f"[VALIDATOR] FAILED {test_name}: Agent returned (None, None) when legal moves available")
+                            return False, f"Agent returned (None, None) when legal moves were available (failed on {test_name})", duration_ms
+
+                    print(f"[VALIDATOR] PASSED {test_name}")
+
+                except FutureTimeoutError:
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    print(f"[VALIDATOR] FAILED {test_name}: Timeout")
+                    return False, f"Agent exceeded timeout (failed on {test_name})", duration_ms
+                except Exception as e:
+                    import traceback
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    error_msg = sanitize_error_message(e)
+                    print(f"[VALIDATOR] FAILED {test_name}: {error_msg}")
+                    print(f"[VALIDATOR] Full error: {e}")
+                    print(f"[VALIDATOR] Traceback: {traceback.format_exc()}")
+                    return False, f"{error_msg} (failed on {test_name})", duration_ms
+
+            # All tests passed!
             duration_ms = int((time.time() - start_time) * 1000)
-
-            # Validate result format
-            if result is None or not isinstance(result, tuple) or len(result) != 2:
-                return False, "Agent must return (piece, move) tuple", duration_ms
-
-            piece, move = result
-
-            # Check if valid move when moves are available
-            if piece is None and move is None:
-                legal_moves = list_legal_moves_for(board, white)
-                if len(legal_moves) > 0:
-                    return False, "Agent returned (None, None) when legal moves were available", duration_ms
-
-            # Success!
+            print(f"[VALIDATOR] All 4 tests passed in {duration_ms}ms")
             return True, None, duration_ms
 
-        except FutureTimeoutError:
-            duration_ms = int((time.time() - start_time) * 1000)
-            return False, f"Agent exceeded {VALIDATION_TIMEOUT} second timeout", duration_ms
-        except Exception as e:
-            duration_ms = int((time.time() - start_time) * 1000)
-            return False, sanitize_error_message(e), duration_ms
         finally:
             executor.shutdown(wait=False)
 

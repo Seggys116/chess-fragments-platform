@@ -9,6 +9,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const { searchParams } = new URL(request.url);
+  const speed = Math.max(0.5, Math.min(4, parseFloat(searchParams.get('speed') || '1')));
 
   // Get buffered game
   const bufferedGame = gameBufferManager.getGame(id);
@@ -70,7 +72,8 @@ export async function GET(
         const moveBuffer = [...bufferedGame.moves];
         let moveIndex = 0;
 
-        // Stream moves at controlled rate: 1 move per 250ms (4 moves/sec)
+        // Stream moves at controlled rate based on speed (base: 250ms = 4 moves/sec at 1x)
+        const intervalMs = Math.round(250 / speed);
         interval = setInterval(() => {
           if (isClosed) {
             if (interval) clearInterval(interval);
@@ -104,7 +107,7 @@ export async function GET(
             console.error('Streaming error:', error);
             safeClose();
           }
-        }, 250); // Stream 1 move every 250ms (4 moves/second)
+        }, intervalMs);
 
         request.signal.addEventListener('abort', () => {
           safeClose();

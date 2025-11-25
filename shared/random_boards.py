@@ -7,7 +7,7 @@ Generates random SYMMETRIC board configurations with:
 - Middle row empty
 - SYMMETRIC: Black pieces mirror white pieces (180-degree rotation)
 - No king in check at start
-- No mate-in-1 for either side
+- No check-in-1 for either side (ensures fair tempo - no immediate threats)
 - Both sides have at least 3 legal moves
 - Valid legal positions only
 """
@@ -89,6 +89,36 @@ def has_mate_in_one(board_squares, player):
     return False
 
 
+def has_check_in_one(board_squares, player):
+    """
+    Check if the given player can give check on their first move.
+    Returns True if any legal move puts the opponent's king in check.
+    This ensures fair starting positions where neither side has immediate tempo.
+    """
+    players = [white, black]
+    board = Board(
+        squares=board_squares,
+        players=players,
+        turn_iterator=cycle(players),
+    )
+
+    opponent = black if player == white else white
+    legal_moves = list_legal_moves_for(board, player)
+
+    for piece, move in legal_moves:
+        # Clone board and simulate the move
+        board_clone = board.clone()
+        _, piece_clone, move_clone = copy_piece_move(board_clone, piece, move)
+
+        if piece_clone and move_clone:
+            piece_clone.move(move_clone)
+            # Check if opponent's king is now in check
+            if is_king_in_check(board_clone.squares, opponent):
+                return True
+
+    return False
+
+
 def is_position_playable(board_squares, min_moves_per_side=3):
     """
     Check if both sides have at least min_moves_per_side legal moves.
@@ -117,7 +147,7 @@ def generate_random_board(seed=None, max_attempts=100):
     - SYMMETRIC: Black pieces mirror white pieces (rotated 180 degrees)
     - 3-8 pieces per side
     - NO king in check at start
-    - NO mate-in-1 for either side
+    - NO check-in-1 for either side (ensures fair tempo - no immediate threats)
     - Both sides have at least 3 legal moves
     - Retries up to max_attempts times to find a valid board
     """
@@ -187,17 +217,17 @@ def generate_random_board(seed=None, max_attempts=100):
             print(f"Attempt {attempt + 1}: Insufficient legal moves, retrying...")
             continue
 
-        # Check 3: No mate-in-1 for white (who moves first)
-        if has_mate_in_one(board, white):
-            print(f"Attempt {attempt + 1}: White has mate-in-1, retrying...")
+        # Check 3: No check-in-1 for white (who moves first) - ensures fair tempo
+        if has_check_in_one(board, white):
+            print(f"Attempt {attempt + 1}: White has check-in-1, retrying...")
             continue
 
-        # Check 4: No mate-in-1 for black
-        if has_mate_in_one(board, black):
-            print(f"Attempt {attempt + 1}: Black has mate-in-1, retrying...")
+        # Check 4: No check-in-1 for black - ensures fair tempo
+        if has_check_in_one(board, black):
+            print(f"Attempt {attempt + 1}: Black has check-in-1, retrying...")
             continue
 
-        # All checks passed
+        # All checks passed (check-in-1 implies mate-in-1 is also excluded)
         print(f"Generated valid balanced board on attempt {attempt + 1}")
         return board
 

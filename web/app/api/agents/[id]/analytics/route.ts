@@ -8,6 +8,10 @@ export async function GET(
 ) {
     try {
         const { id } = await params;
+        const { searchParams } = new URL(request.url);
+
+        const h2hLimit = Math.min(Math.max(parseInt(searchParams.get('h2hLimit') || '10'), 1), 100);
+        const h2hOffset = Math.max(parseInt(searchParams.get('h2hOffset') || '0'), 0);
 
         const user = await getUserFromRequest(request);
 
@@ -18,7 +22,6 @@ export async function GET(
             );
         }
 
-        // Get agent with owner info
         const agent = await prisma.agent.findUnique({
             where: { id },
             include: {
@@ -38,7 +41,6 @@ export async function GET(
             );
         }
 
-        // CHECK AUTHORIZATION - Only owner can view analytics
         if (agent.user.id !== user.id) {
             return NextResponse.json(
                 { error: 'Unauthorized - You can only view analytics for your own agents' },
@@ -46,9 +48,6 @@ export async function GET(
             );
         }
 
-        // Use raw SQL for efficient statistics calculation (no need to load all game states into memory)
-        // Get move time statistics using SQL aggregation
-        // Note: Actual timeouts have move_time_ms = NULL (set by executor when agent times out)
         const moveTimeStatsResult = await prisma.$queryRaw<Array<{
             min: number | null;
             max: number | null;
@@ -58,12 +57,12 @@ export async function GET(
             timeout_count: bigint;
         }>>`
       SELECT
-        MIN(gs.move_time_ms)::float as min,
-        MAX(gs.move_time_ms)::float as max,
-        AVG(gs.move_time_ms)::float as avg,
-        STDDEV(gs.move_time_ms)::float as stddev,
-        COUNT(gs.move_time_ms) as count,
-        COUNT(*) FILTER (WHERE gs.move_time_ms IS NULL) as timeout_count
+        MIN(gs.move_time_ms) FILTER (WHERE gs.move_time_ms <= 14000)::float as min,
+        MAX(gs.move_time_ms) FILTER (WHERE gs.move_time_ms <= 14000)::float as max,
+        AVG(gs.move_time_ms) FILTER (WHERE gs.move_time_ms <= 14000)::float as avg,
+        STDDEV(gs.move_time_ms) FILTER (WHERE gs.move_time_ms <= 14000)::float as stddev,
+        COUNT(*) FILTER (WHERE gs.move_time_ms IS NOT NULL AND gs.move_time_ms <= 14000) as count,
+        COUNT(*) FILTER (WHERE gs.move_time_ms IS NULL OR gs.move_time_ms > 14000) as timeout_count
       FROM game_states gs
       INNER JOIN matches m ON gs.match_id = m.id
       WHERE (m.white_agent_id = ${id} OR m.black_agent_id = ${id})
@@ -75,10 +74,10 @@ export async function GET(
     `;
 
         const moveTimeStats = moveTimeStatsResult[0] ? {
-            min: moveTimeStatsResult[0].min ? Math.round(moveTimeStatsResult[0].min * 100) / 100 : null,
-            max: moveTimeStatsResult[0].max ? Math.round(moveTimeStatsResult[0].max * 100) / 100 : null,
-            avg: moveTimeStatsResult[0].avg ? Math.round(moveTimeStatsResult[0].avg * 100) / 100 : null,
-            stdDev: moveTimeStatsResult[0].stddev ? Math.round(moveTimeStatsResult[0].stddev * 100) / 100 : null,
+            min: moveTimeStatsResult[0].min !== null ? Math.round(moveTimeStatsResult[0].min * 100) / 100 : null,
+            max: moveTimeStatsResult[0].max !== null ? Math.round(moveTimeStatsResult[0].max * 100) / 100 : null,
+            avg: moveTimeStatsResult[0].avg !== null ? Math.round(moveTimeStatsResult[0].avg * 100) / 100 : null,
+            stdDev: moveTimeStatsResult[0].stddev !== null ? Math.round(moveTimeStatsResult[0].stddev * 100) / 100 : null,
             count: Number(moveTimeStatsResult[0].count),
             timeoutCount: Number(moveTimeStatsResult[0].timeout_count),
             timeoutPercentage: (Number(moveTimeStatsResult[0].count) + Number(moveTimeStatsResult[0].timeout_count)) > 0
@@ -86,7 +85,6 @@ export async function GET(
                 : 0,
         } : { min: null, max: null, avg: null, stdDev: null, count: 0, timeoutCount: 0, timeoutPercentage: 0 };
 
-        // Get evaluation statistics using SQL aggregation
         const evaluationStatsResult = await prisma.$queryRaw<Array<{
             min: number | null;
             max: number | null;
@@ -115,7 +113,6 @@ export async function GET(
             count: Number(evaluationStatsResult[0].count),
         } : { min: null, max: null, avg: null, stdDev: null, count: 0 };
 
-        // Get total match count efficiently
         const totalMatches = await prisma.match.count({
             where: {
                 OR: [
@@ -126,7 +123,6 @@ export async function GET(
             },
         });
 
-        // Only load the last 20 matches with minimal data for performance chart
         const recentMatches = await prisma.match.findMany({
             where: {
                 OR: [
@@ -154,7 +150,6 @@ export async function GET(
             take: 20,
         });
 
-        // Map recent matches for performance chart
         const performanceOverTime = recentMatches.reverse().map((match, index) => {
             const isWhite = match.whiteAgentId === id;
             const agentMoves = match.gameStates.filter((s) => {
@@ -179,7 +174,16 @@ export async function GET(
             };
         });
 
-        // Get head-to-head records using SQL for efficiency (top 10 opponents by game count)
+        const h2hTotalResult = await prisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(DISTINCT
+        CASE WHEN m.white_agent_id = ${id} THEN m.black_agent_id ELSE m.white_agent_id END
+      ) as count
+      FROM matches m
+      WHERE (m.white_agent_id = ${id} OR m.black_agent_id = ${id})
+        AND m.status = 'completed'
+    `;
+        const h2hTotal = Number(h2hTotalResult[0]?.count || 0);
+
         const headToHeadResult = await prisma.$queryRaw<Array<{
             opponent_id: string;
             opponent_name: string;
@@ -216,7 +220,8 @@ export async function GET(
       FROM opponent_matches
       GROUP BY opponent_id
       ORDER BY total DESC
-      LIMIT 10
+      LIMIT ${h2hLimit}
+      OFFSET ${h2hOffset}
     `;
 
         const headToHead = headToHeadResult.map(row => ({
@@ -228,7 +233,6 @@ export async function GET(
             total: Number(row.total),
         }));
 
-        // Get game statistics (quickest, longest, best evaluation)
         const gameStatsResult = await prisma.$queryRaw<Array<{
             quickest_win_moves: number | null;
             longest_game_moves: number | null;
@@ -259,7 +263,6 @@ export async function GET(
             quickestLoss: gameStatsResult[0].quickest_loss_moves || null,
         } : { quickestWin: null, longestGame: null, avgGameLength: null, quickestLoss: null };
 
-        // Get best/worst moves by evaluation
         const extremeMovesResult = await prisma.$queryRaw<Array<{
             best_move_eval: number | null;
             worst_move_eval: number | null;
@@ -297,7 +300,6 @@ export async function GET(
             worstMoveMatchId: extremeMovesResult[0].worst_move_match_id,
         } : { bestMoveEval: null, worstMoveEval: null, bestMoveMatchId: null, worstMoveMatchId: null };
 
-        // Get version history (all versions of this agent by name)
         const versionHistory = await prisma.agent.findMany({
             where: {
                 userId: agent.userId,
@@ -348,6 +350,7 @@ export async function GET(
             extremeMoves,
             performanceOverTime,
             headToHead,
+            h2hTotal,
             totalMatches,
             versionHistory: versionHistory.map(v => ({
                 id: v.id,

@@ -25,13 +25,27 @@ export default function LeaderboardPage() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [userAgentIds, setUserAgentIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetchLeaderboard();
+    fetchUserAgents();
     // Auto-refresh every 30 seconds
     const interval = setInterval(fetchLeaderboard, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  const fetchUserAgents = async () => {
+    try {
+      const response = await fetch('/api/dashboard/agents');
+      if (response.ok) {
+        const data = await response.json();
+        setUserAgentIds(new Set(data.agents.map((a: { id: string }) => a.id)));
+      }
+    } catch {
+      // Not authenticated or error - ignore silently
+    }
+  };
 
   const fetchLeaderboard = async () => {
     try {
@@ -65,7 +79,6 @@ export default function LeaderboardPage() {
       <div className="relative z-10">
         <Navigation />
         <div className="container mx-auto py-8 px-4">
-          {/* Header */}
           <div className="mb-6 sm:mb-8 text-center">
             <div className="inline-flex items-center gap-2 sm:gap-3 mb-4">
               <Trophy className="w-8 sm:w-10 h-8 sm:h-10 text-purple-400" />
@@ -75,7 +88,6 @@ export default function LeaderboardPage() {
             <p className="text-gray-400 text-base sm:text-lg">Top ranked chess AI agents competing for glory</p>
           </div>
 
-          {/* Stats Cards */}
           {!loading && leaderboard.length > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-8">
               <div className="bg-gray-800/50 backdrop-blur p-4 rounded-lg border border-purple-500/20 text-center">
@@ -122,18 +134,21 @@ export default function LeaderboardPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {/* Top 3 Podium */}
               {leaderboard.length >= 3 && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                  {/* Second Place */}
                   <div className="order-2 md:order-1">
-                    <div className="bg-gradient-to-br from-gray-700/50 to-gray-800/50 backdrop-blur rounded-lg border border-gray-500/30 p-6 transform md:translate-y-4 hover:scale-105 transition-all duration-300">
+                    <div className={`bg-gradient-to-br from-gray-700/50 to-gray-800/50 backdrop-blur rounded-lg border p-6 transform md:translate-y-4 hover:scale-105 transition-all duration-300 ${userAgentIds.has(leaderboard[1].agentId) ? 'border-purple-500 ring-2 ring-purple-500' : 'border-gray-500/30'}`}>
                       <div className="text-center mb-3">
                         <Trophy className="w-12 h-12 text-gray-300 mx-auto mb-2" />
                         <div className="text-4xl font-bold text-gray-300">2nd</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-white font-bold text-lg">{leaderboard[1].agentName}</div>
+                        <div className="flex items-center justify-center gap-2">
+                          <span className="text-white font-bold text-lg">{leaderboard[1].agentName}</span>
+                          {userAgentIds.has(leaderboard[1].agentId) && (
+                            <span className="px-2 py-0.5 bg-purple-600 text-white text-xs rounded-full font-semibold">YOU</span>
+                          )}
+                        </div>
                         <div className="text-gray-400 text-sm">v{leaderboard[1].version}</div>
                         <div className="text-2xl font-bold text-gray-300 mt-2">{leaderboard[1].eloRating}</div>
                         <div className="text-xs text-gray-500">ELO Rating</div>
@@ -144,15 +159,19 @@ export default function LeaderboardPage() {
                     </div>
                   </div>
 
-                  {/* First Place */}
                   <div className="order-1 md:order-2">
-                    <div className="bg-gradient-to-br from-yellow-600/30 to-yellow-800/30 backdrop-blur rounded-lg border-2 border-yellow-500/50 p-6 transform hover:scale-105 transition-all duration-300 shadow-xl shadow-yellow-500/20">
+                    <div className={`bg-gradient-to-br from-yellow-600/30 to-yellow-800/30 backdrop-blur rounded-lg border-2 p-6 transform hover:scale-105 transition-all duration-300 shadow-xl ${userAgentIds.has(leaderboard[0].agentId) ? 'border-purple-500 ring-2 ring-purple-500 shadow-purple-500/20' : 'border-yellow-500/50 shadow-yellow-500/20'}`}>
                       <div className="text-center mb-3">
                         <Trophy className="w-16 h-16 text-yellow-400 mx-auto mb-2" />
                         <div className="text-5xl font-bold text-yellow-400">1st</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-white font-bold text-xl">{leaderboard[0].agentName}</div>
+                        <div className="flex items-center justify-center gap-2">
+                          <span className="text-white font-bold text-xl">{leaderboard[0].agentName}</span>
+                          {userAgentIds.has(leaderboard[0].agentId) && (
+                            <span className="px-2 py-0.5 bg-purple-600 text-white text-xs rounded-full font-semibold">YOU</span>
+                          )}
+                        </div>
                         <div className="text-gray-400 text-sm">v{leaderboard[0].version}</div>
                         <div className="text-3xl font-bold text-yellow-400 mt-2">{leaderboard[0].eloRating}</div>
                         <div className="text-xs text-gray-500">ELO Rating</div>
@@ -163,15 +182,19 @@ export default function LeaderboardPage() {
                     </div>
                   </div>
 
-                  {/* Third Place */}
                   <div className="order-3">
-                    <div className="bg-gradient-to-br from-orange-700/30 to-orange-900/30 backdrop-blur rounded-lg border border-orange-600/30 p-6 transform md:translate-y-8 hover:scale-105 transition-all duration-300">
+                    <div className={`bg-gradient-to-br from-orange-700/30 to-orange-900/30 backdrop-blur rounded-lg border p-6 transform md:translate-y-8 hover:scale-105 transition-all duration-300 ${userAgentIds.has(leaderboard[2].agentId) ? 'border-purple-500 ring-2 ring-purple-500' : 'border-orange-600/30'}`}>
                       <div className="text-center mb-3">
                         <Trophy className="w-10 h-10 text-orange-600 mx-auto mb-2" />
                         <div className="text-3xl font-bold text-orange-600">3rd</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-white font-bold text-lg">{leaderboard[2].agentName}</div>
+                        <div className="flex items-center justify-center gap-2">
+                          <span className="text-white font-bold text-lg">{leaderboard[2].agentName}</span>
+                          {userAgentIds.has(leaderboard[2].agentId) && (
+                            <span className="px-2 py-0.5 bg-purple-600 text-white text-xs rounded-full font-semibold">YOU</span>
+                          )}
+                        </div>
                         <div className="text-gray-400 text-sm">v{leaderboard[2].version}</div>
                         <div className="text-2xl font-bold text-orange-600 mt-2">{leaderboard[2].eloRating}</div>
                         <div className="text-xs text-gray-500">ELO Rating</div>
@@ -184,7 +207,6 @@ export default function LeaderboardPage() {
                 </div>
               )}
 
-              {/* Full Leaderboard Table */}
               <div className="bg-gray-800/50 backdrop-blur rounded-lg border border-purple-500/20 overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full">
@@ -201,7 +223,7 @@ export default function LeaderboardPage() {
                     </thead>
                     <tbody className="divide-y divide-purple-500/10">
                       {leaderboard.map((entry, index) => (
-                        <tr key={entry.agentId} className={`hover:bg-purple-900/20 transition-all duration-200 ${index < 3 ? 'bg-gradient-to-r from-transparent via-purple-900/10 to-transparent' : ''}`}>
+                        <tr key={entry.agentId} className={`hover:bg-purple-900/20 transition-all duration-200 ${index < 3 ? 'bg-gradient-to-r from-transparent via-purple-900/10 to-transparent' : ''} ${userAgentIds.has(entry.agentId) ? 'ring-2 ring-purple-500 ring-inset bg-purple-900/30' : ''}`}>
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-2">
                               {getMedalIcon(entry.rank)}
@@ -212,7 +234,14 @@ export default function LeaderboardPage() {
                           </td>
                           <td className="px-6 py-4">
                             <Link href={`/agent/${entry.agentId}`} className="hover:text-purple-400 transition-colors">
-                              <div className="text-white font-medium">{entry.agentName}</div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-white font-medium">{entry.agentName}</span>
+                                {userAgentIds.has(entry.agentId) && (
+                                  <span className="px-2 py-0.5 bg-purple-600 text-white text-xs rounded-full font-semibold">
+                                    YOU
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-gray-500 text-sm">v{entry.version}</div>
                             </Link>
                           </td>

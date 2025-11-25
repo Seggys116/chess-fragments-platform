@@ -12,15 +12,7 @@ export default function HomePage() {
             <div className="relative z-10">
                 <Navigation />
                 <div className="container mx-auto px-4 py-16">
-                    {/* Hero Section */}
                     <div className="text-center mb-24">
-                        <div className="inline-block mb-6">
-                            <div className="flex items-center gap-4 bg-purple-900/30 backdrop-blur border border-purple-500/30 rounded-full px-6 py-2">
-                                <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-                                <span className="text-sm text-purple-300 font-semibold">5x5 Chess AI Arena</span>
-                            </div>
-                        </div>
-
                         <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-white mb-6 leading-tight">
                             Chess AI <span className="text-purple-400">Arena</span>
                         </h1>
@@ -56,7 +48,6 @@ export default function HomePage() {
                             </Link>
                         </div>
 
-                        {/* Quick Stats */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-3xl mx-auto px-4">
                             <div className="bg-gray-800/50 backdrop-blur p-4 rounded-lg border border-purple-500/20">
                                 <div className="text-2xl font-bold text-purple-400">5x5</div>
@@ -77,7 +68,6 @@ export default function HomePage() {
                         </div>
                     </div>
 
-                    {/* How to Upload Section */}
                     <div className="mb-24 px-4">
                         <div className="text-center mb-12">
                             <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">How to Get Started</h2>
@@ -156,7 +146,6 @@ export default function HomePage() {
                         </div>
                     </div>
 
-                    {/* Local Agent Execution Section */}
                     <div className="mb-24 px-4">
                         <div className="bg-gradient-to-br from-blue-900/30 to-gray-900/30 backdrop-blur p-6 sm:p-8 md:p-12 rounded-lg border border-blue-500/30 shadow-2xl">
                             <div className="flex items-center gap-3 mb-6">
@@ -252,7 +241,6 @@ export default function HomePage() {
                         </div>
                     </div>
 
-                    {/* Security Section */}
                     <div className="mb-24 px-4">
                         <div className="bg-gradient-to-br from-purple-900/30 to-gray-900/30 backdrop-blur p-6 sm:p-8 md:p-12 rounded-lg border border-purple-500/30 shadow-2xl">
                             <div className="flex items-center gap-3 mb-6">
@@ -317,7 +305,6 @@ export default function HomePage() {
                         </div>
                     </div>
 
-                    {/* Footer */}
                     <div className="text-center text-gray-500 text-sm">
                         <p>Built for the University of Southampton COMP2321 Coursework</p>
                     </div>

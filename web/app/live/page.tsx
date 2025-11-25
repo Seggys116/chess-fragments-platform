@@ -35,6 +35,11 @@ interface LiveMatch {
   startedAt: string;
 }
 
+interface GameResult {
+  winner: 'white' | 'black' | null;
+  termination: string;
+}
+
 export default function LiveMatchPage() {
   const [liveMatches, setLiveMatches] = useState<LiveMatch[]>([]);
   const [selectedMatchIndex, setSelectedMatchIndex] = useState(0);
@@ -43,14 +48,20 @@ export default function LiveMatchPage() {
   const [isConnecting, setIsConnecting] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showGamesList, setShowGamesList] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [gameResult, setGameResult] = useState<GameResult | null>(null);
 
   const previousStateRef = useRef<GameState | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const isConnectingRef = useRef(false);
+  const playbackSpeedRef = useRef(playbackSpeed);
 
-  // Extract pieces from board state (handle multiple formats)
+  useEffect(() => {
+    playbackSpeedRef.current = playbackSpeed;
+  }, [playbackSpeed]);
+
   const extractPieces = useCallback((boardData: unknown): Piece[] => {
     let pieces: Piece[] = [];
 
@@ -74,8 +85,6 @@ export default function LiveMatchPage() {
     return pieces;
   }, []);
 
-  // No animation - pieces teleport instantly
-
   const fetchLiveMatches = useCallback(async () => {
     try {
       const res = await fetch('/api/matches/live');
@@ -92,9 +101,7 @@ export default function LiveMatchPage() {
     }
   }, []);
 
-  // Connect to streaming endpoint for a specific match
   const connectToMatch = useCallback(async (matchId: string, currentIndex: number) => {
-    // Prevent duplicate connections
     if (isConnectingRef.current) {
       console.log('Already connecting, skipping duplicate connection attempt');
       return;
@@ -103,7 +110,6 @@ export default function LiveMatchPage() {
     isConnectingRef.current = true;
     console.log('Connecting to match:', matchId, 'at index:', currentIndex);
 
-    // Clean up existing connection
     if (abortControllerRef.current) {
       console.log('Aborting existing stream connection');
       abortControllerRef.current.abort();
@@ -118,18 +124,18 @@ export default function LiveMatchPage() {
       streamReaderRef.current = null;
     }
 
-    // Reset state for new match
     setAllGameStates([]);
     setCurrentMoveIndex(0);
     previousStateRef.current = null;
     setIsConnecting(true);
     setError(null);
+    setGameResult(null);
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
     try {
-      const response = await fetch(`/api/matches/${matchId}/ws`, {
+      const response = await fetch(`/api/matches/${matchId}/ws?speed=${playbackSpeedRef.current}`, {
         signal: abortController.signal,
       });
 
@@ -151,7 +157,6 @@ export default function LiveMatchPage() {
       const decoder = new TextDecoder();
       let buffer = '';
 
-      // Read stream continuously
       while (true) {
         const { done, value } = await reader.read();
 
@@ -160,10 +165,8 @@ export default function LiveMatchPage() {
           break;
         }
 
-        // Decode the chunk and add to buffer
         buffer += decoder.decode(value, { stream: true });
 
-        // Process complete lines (NDJSON format)
         const lines = buffer.split('\n');
         buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
@@ -177,7 +180,6 @@ export default function LiveMatchPage() {
             if (data.type === 'connected') {
               console.log('Connected to match:', data.matchId);
             } else if (data.type === 'heartbeat') {
-              // Heartbeat to keep connection alive - no action needed
               console.log('Heartbeat received');
             } else if (data.type === 'initial') {
               const states = data.gameStates || [];
@@ -207,8 +209,11 @@ export default function LiveMatchPage() {
               setError('Stream timeout - please refresh the page');
               setIsConnecting(false);
             } else if (data.type === 'completed') {
-              console.log('Match completed, switching to next game...');
-              // Match completed, refresh and switch to next game
+              console.log('Match completed:', data.winner, data.termination);
+              setGameResult({
+                winner: data.winner,
+                termination: data.termination || 'Game Over'
+              });
               setTimeout(async () => {
                 const matches = await fetchLiveMatches();
                 if (matches && matches.length > 0) {
@@ -217,7 +222,7 @@ export default function LiveMatchPage() {
                   setSelectedMatchIndex(nextIndex);
                   connectToMatch(matches[nextIndex].id, nextIndex);
                 }
-              }, 2000);
+              }, 4000);
             }
           } catch (err) {
             console.error('Error parsing stream message:', err, 'Line:', line);
@@ -235,7 +240,6 @@ export default function LiveMatchPage() {
       console.error('Stream error:', err);
       setError('Connection lost. Reconnecting...');
 
-      // Reconnect after delay
       setTimeout(async () => {
         const matches = await fetchLiveMatches();
         if (matches.length > 0) {
@@ -254,7 +258,6 @@ export default function LiveMatchPage() {
     }
   }, [liveMatches, selectedMatchIndex, connectToMatch]);
 
-  // Initial fetch and setup polling
   useEffect(() => {
     const init = async () => {
       const matches = await fetchLiveMatches();
@@ -268,7 +271,6 @@ export default function LiveMatchPage() {
 
     init();
 
-    // Poll for new matches every 10 seconds
     pollIntervalRef.current = setInterval(async () => {
       await fetchLiveMatches();
     }, 10000);
@@ -285,17 +287,15 @@ export default function LiveMatchPage() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run once on mount
+  }, []);
 
   const currentMatch = liveMatches[selectedMatchIndex] || null;
   const currentState = allGameStates[currentMoveIndex];
 
-  // Debug logging
   if (currentMatch && !currentState) {
     console.log('No current state - allGameStates:', allGameStates.length, 'currentMoveIndex:', currentMoveIndex);
   }
 
-  // Render chess piece
   const renderPiece = (piece: Piece, isAnimating: boolean = false, style: React.CSSProperties = {}) => {
     const pieceName = piece.type.toLowerCase();
     const color = piece.player.toLowerCase();
@@ -313,7 +313,6 @@ export default function LiveMatchPage() {
     );
   };
 
-  // Render board
   const renderBoard = () => {
     const grid: (Piece | null)[][] = Array(5).fill(null).map(() => Array(5).fill(null));
 
@@ -336,7 +335,6 @@ export default function LiveMatchPage() {
       <div className="relative">
         <div className="bg-gray-900/50 p-4 rounded-xl border-2 border-purple-500/50 shadow-2xl shadow-purple-500/20">
           <div className="flex">
-            {/* Rank coordinates (left) */}
             <div className="flex flex-col mr-2">
               <div className="h-6"></div>
               {['5', '4', '3', '2', '1'].map(rank => (
@@ -346,9 +344,7 @@ export default function LiveMatchPage() {
               ))}
             </div>
 
-            {/* Main board wrapper */}
             <div className="relative">
-              {/* File coordinates (top) */}
               <div className="flex mb-2">
                 {['a', 'b', 'c', 'd', 'e'].map(file => (
                   <div key={file} className="w-20 text-center text-gray-500 text-sm font-semibold h-6 flex items-center justify-center">
@@ -357,7 +353,6 @@ export default function LiveMatchPage() {
                 ))}
               </div>
 
-              {/* Chess board grid */}
               <div className="border border-gray-700/50 relative">
                 {grid.map((row, y) => (
                   <div key={y} className="flex">
@@ -384,7 +379,6 @@ export default function LiveMatchPage() {
                 ))}
               </div>
 
-              {/* File coordinates (bottom) */}
               <div className="flex mt-2">
                 {['a', 'b', 'c', 'd', 'e'].map(file => (
                   <div key={file} className="w-20 text-center text-gray-500 text-sm font-semibold h-6 flex items-center justify-center">
@@ -394,7 +388,6 @@ export default function LiveMatchPage() {
               </div>
             </div>
 
-            {/* Rank coordinates (right) */}
             <div className="flex flex-col ml-2">
               <div className="h-6"></div>
               {['5', '4', '3', '2', '1'].map(rank => (
@@ -415,7 +408,6 @@ export default function LiveMatchPage() {
       <div className="relative z-10 flex flex-col min-h-screen">
         <Navigation />
 
-        {/* Header with game switcher */}
         <div className="container mx-auto px-4 py-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -427,9 +419,9 @@ export default function LiveMatchPage() {
                 </span>
               )}
               {!isConnecting && liveMatches.length > 0 && (
-                <span className="px-3 py-1 bg-green-900/50 text-green-300 rounded-full text-sm animate-pulse border border-green-500/30 flex items-center gap-2">
-                  <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-                  LIVE
+                <span className="px-3 py-1 bg-blue-900/50 text-blue-300 rounded-full text-sm border border-blue-500/30 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-blue-400 rounded-full"></span>
+                  RECENT
                 </span>
               )}
             </div>
@@ -449,7 +441,6 @@ export default function LiveMatchPage() {
             )}
           </div>
 
-          {/* Games list dropdown */}
           {showGamesList && liveMatches.length > 0 && (
             <div className="bg-gray-900/95 backdrop-blur border border-purple-500/30 rounded-xl p-4 mb-4 shadow-xl">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -493,7 +484,6 @@ export default function LiveMatchPage() {
             </div>
           )}
 
-          {/* Navigation arrows for switching games */}
           {liveMatches.length > 1 && !showGamesList && (
             <div className="flex items-center justify-center gap-4 mb-4">
               <button
@@ -519,7 +509,6 @@ export default function LiveMatchPage() {
           )}
         </div>
 
-        {/* Board centered */}
         <div className="flex-1 flex items-center justify-center px-4 pb-8">
           {liveMatches.length === 0 && !isConnecting ? (
             <div className="backdrop-blur-sm bg-gray-900/30 p-8 rounded-2xl border border-purple-500/20 shadow-2xl text-center">
@@ -531,10 +520,8 @@ export default function LiveMatchPage() {
             <div className="backdrop-blur-sm bg-gray-900/30 p-8 rounded-2xl border border-purple-500/20 shadow-2xl">
               {renderBoard()}
 
-              {/* Match Info */}
               {currentMatch && (
                 <div className="mt-6 text-center space-y-4">
-                  {/* Move Counter or Waiting Message */}
                   {allGameStates.length === 0 && !isConnecting ? (
                     <div className="bg-yellow-900/30 backdrop-blur border border-yellow-500/30 rounded-xl p-4 inline-block">
                       <div className="text-xs text-yellow-300 uppercase font-semibold mb-1">Status</div>
@@ -548,7 +535,7 @@ export default function LiveMatchPage() {
                     </div>
                   ) : (
                     <div className="bg-purple-900/30 backdrop-blur border border-purple-500/30 rounded-xl p-4 inline-block">
-                      <div className="text-xs text-purple-300 uppercase font-semibold mb-1">Live Move</div>
+                      <div className="text-xs text-purple-300 uppercase font-semibold mb-1">Move</div>
                       <div className="text-4xl font-bold text-white">
                         {allGameStates.length > 0 ? allGameStates.length : currentMatch.currentMove}
                       </div>
@@ -565,25 +552,60 @@ export default function LiveMatchPage() {
                     </div>
                   )}
 
-                  <div className="flex justify-center items-center gap-4">
-                    <div className="text-right">
-                      <div className="text-white font-semibold">{currentMatch.whiteAgent.name}</div>
-                      <div className="text-xs text-gray-400">v{currentMatch.whiteAgent.version}</div>
-                      <div className="text-xs text-yellow-400">
-                        <Zap className="w-3 h-3 inline" /> {currentMatch.whiteAgent.eloRating}
+                  {gameResult && (
+                    <div className={`p-4 rounded-xl border ${gameResult.winner === 'white' ? 'bg-white/10 border-white/30' : gameResult.winner === 'black' ? 'bg-gray-800/50 border-gray-500/30' : 'bg-yellow-900/30 border-yellow-500/30'}`}>
+                      <div className="text-lg font-bold text-white">
+                        {gameResult.winner === 'white' ? `${currentMatch.whiteAgent.name} Wins!` :
+                         gameResult.winner === 'black' ? `${currentMatch.blackAgent.name} Wins!` :
+                         'Draw!'}
                       </div>
+                      <div className="text-sm text-gray-400 capitalize">{gameResult.termination}</div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-center items-center gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <div className="text-white font-semibold">{currentMatch.whiteAgent.name}</div>
+                        <div className="text-xs text-gray-400">v{currentMatch.whiteAgent.version}</div>
+                        <div className="text-xs text-yellow-400">
+                          <Zap className="w-3 h-3 inline" /> {currentMatch.whiteAgent.eloRating}
+                        </div>
+                      </div>
+                      <div className="w-6 h-6 rounded-full bg-white border-2 border-gray-300 shadow-md"></div>
                     </div>
                     <div className="bg-purple-600/50 backdrop-blur px-4 py-2 rounded-lg border border-purple-400/50">
                       <span className="text-white font-bold">VS</span>
                     </div>
-                    <div className="text-left">
-                      <div className="text-white font-semibold">{currentMatch.blackAgent.name}</div>
-                      <div className="text-xs text-gray-400">v{currentMatch.blackAgent.version}</div>
-                      <div className="text-xs text-yellow-400">
-                        <Zap className="w-3 h-3 inline" /> {currentMatch.blackAgent.eloRating}
+                    <div className="flex items-center gap-3">
+                      <div className="w-6 h-6 rounded-full bg-gray-800 border-2 border-gray-500 shadow-md"></div>
+                      <div className="text-left">
+                        <div className="text-white font-semibold">{currentMatch.blackAgent.name}</div>
+                        <div className="text-xs text-gray-400">v{currentMatch.blackAgent.version}</div>
+                        <div className="text-xs text-yellow-400">
+                          <Zap className="w-3 h-3 inline" /> {currentMatch.blackAgent.eloRating}
+                        </div>
                       </div>
                     </div>
                   </div>
+
+                  <div className="flex items-center justify-center gap-2 mt-4">
+                    <span className="text-gray-400 text-sm">Speed:</span>
+                    {[0.5, 1, 2, 4].map(speed => (
+                      <button
+                        key={speed}
+                        onClick={() => setPlaybackSpeed(speed)}
+                        className={`px-3 py-1 rounded text-sm font-medium transition-all ${
+                          playbackSpeed === speed
+                            ? 'bg-purple-600 text-white'
+                            : 'bg-gray-700/50 text-gray-300 hover:bg-gray-600/50'
+                        }`}
+                      >
+                        {speed}x
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Speed changes apply to the next game</p>
                 </div>
               )}
             </div>

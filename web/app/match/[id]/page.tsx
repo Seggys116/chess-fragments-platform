@@ -186,7 +186,6 @@ export default function MatchViewerPage() {
       <div className="relative z-10">
         <Navigation />
         <div className="container mx-auto py-6 max-w-7xl px-4">
-          {/* Header */}
           <div className="mb-6 flex justify-between items-center">
             <div className="flex items-center gap-3">
               <Trophy className="w-8 h-8 text-purple-400" />
@@ -194,9 +193,13 @@ export default function MatchViewerPage() {
                 <h1 className="text-3xl font-bold text-white flex items-center gap-2">
                   {match.matchType === 'exhibition' ? 'Exhibition Match' : 'Ranked Battle'}
                   <span className={`px-3 py-1 rounded-full text-sm ${
-                    match.status === 'completed' ? 'bg-gray-700/50 text-gray-300 border border-gray-600/30' : 'bg-green-900/50 text-green-300 border border-green-500/30 animate-pulse'
+                    match.status === 'completed'
+                      ? 'bg-gray-700/50 text-gray-300 border border-gray-600/30'
+                      : match.status === 'error'
+                        ? 'bg-red-900/50 text-red-300 border border-red-500/30'
+                        : 'bg-green-900/50 text-green-300 border border-green-500/30 animate-pulse'
                   }`}>
-                    {match.status === 'completed' ? 'Completed' : 'In Progress'}
+                    {match.status === 'completed' ? 'Completed' : match.status === 'error' ? 'Error' : 'In Progress'}
                   </span>
                 </h1>
                 <p className="text-gray-400 text-sm">
@@ -214,9 +217,7 @@ export default function MatchViewerPage() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Column - Player Info & Match Details */}
             <div className="flex flex-col gap-4">
-              {/* White Player */}
               <div className={`bg-gray-900/50 backdrop-blur border rounded-xl p-4 transition-all ${
                 match.winner === 'white'
                   ? 'border-yellow-500 shadow-lg shadow-yellow-500/20'
@@ -251,14 +252,12 @@ export default function MatchViewerPage() {
                 </div>
               </div>
 
-              {/* VS Badge */}
               <div className="flex justify-center -my-2">
                 <div className="bg-purple-600/50 backdrop-blur px-6 py-2 rounded-full border border-purple-400/50 shadow-lg shadow-purple-500/20">
                   <span className="text-white font-bold text-lg">VS</span>
                 </div>
               </div>
 
-              {/* Black Player */}
               <div className={`bg-gray-900/50 backdrop-blur border rounded-xl p-4 transition-all ${
                 match.winner === 'black'
                   ? 'border-yellow-500 shadow-lg shadow-yellow-500/20'
@@ -293,7 +292,6 @@ export default function MatchViewerPage() {
                 </div>
               </div>
 
-              {/* Match Info */}
               <div className="bg-gray-900/50 backdrop-blur border border-purple-500/20 rounded-xl p-4 shadow-lg">
                 <div className="text-sm font-bold text-purple-400 mb-3 flex items-center gap-2">
                   <Activity className="w-4 h-4" />
@@ -326,16 +324,13 @@ export default function MatchViewerPage() {
               </div>
             </div>
 
-            {/* Center & Right Columns - Chess Board & Controls */}
             <div className="lg:col-span-2 flex flex-col gap-4">
-              {/* Chess Board */}
               {currentState && (
                 <div className="bg-gray-900/50 backdrop-blur border border-purple-500/20 rounded-xl p-6 shadow-lg shadow-purple-500/10">
                   <ChessBoard boardState={currentState.boardState} />
                 </div>
               )}
 
-              {/* Current Move Info */}
               {currentState && (
                 <div className="bg-gray-900/50 backdrop-blur border border-purple-500/20 rounded-xl p-4 shadow-lg">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -373,7 +368,6 @@ export default function MatchViewerPage() {
                 </div>
               )}
 
-              {/* Playback Controls */}
               <div className="bg-gray-900/50 backdrop-blur border border-purple-500/20 rounded-xl p-4 shadow-lg">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
@@ -458,7 +452,6 @@ export default function MatchViewerPage() {
                 </div>
               </div>
 
-              {/* Move History */}
               <div className="bg-gray-900/50 backdrop-blur border border-purple-500/20 rounded-xl p-4 shadow-lg flex-1 flex flex-col min-h-0">
                 <div className="text-sm font-bold text-purple-400 mb-3">Move History</div>
                 <div className="flex-1 overflow-y-auto space-y-1 min-h-0 pr-2">
@@ -536,7 +529,6 @@ function ChessBoard({ boardState }: ChessBoardProps) {
   return (
     <div className="flex items-center justify-center">
       <div>
-        {/* File coordinates (top) */}
         <div className="flex mb-2 ml-8">
           {['a', 'b', 'c', 'd', 'e'].map(file => (
             <div key={file} className="w-20 text-center text-gray-500 text-sm font-semibold">
@@ -546,7 +538,6 @@ function ChessBoard({ boardState }: ChessBoardProps) {
         </div>
 
         <div className="flex">
-          {/* Rank coordinates (left) */}
           <div className="flex flex-col mr-2">
             {['5', '4', '3', '2', '1'].map(rank => (
               <div key={rank} className="h-20 flex items-center justify-center text-gray-500 text-sm font-semibold w-6">
@@ -555,7 +546,6 @@ function ChessBoard({ boardState }: ChessBoardProps) {
             ))}
           </div>
 
-          {/* Chess board */}
           <div className="inline-block bg-gray-900 p-2 rounded-lg border-2 border-purple-500/50">
             {board.map((row, y) => (
               <div key={y} className="flex">
@@ -582,7 +572,6 @@ function ChessBoard({ boardState }: ChessBoardProps) {
             ))}
           </div>
 
-          {/* Rank coordinates (right) */}
           <div className="flex flex-col ml-2">
             {['5', '4', '3', '2', '1'].map(rank => (
               <div key={rank} className="h-20 flex items-center justify-center text-gray-500 text-sm font-semibold w-6">
@@ -592,7 +581,6 @@ function ChessBoard({ boardState }: ChessBoardProps) {
           </div>
         </div>
 
-        {/* File coordinates (bottom) */}
         <div className="flex mt-2 ml-8">
           {['a', 'b', 'c', 'd', 'e'].map(file => (
             <div key={file} className="w-20 text-center text-gray-500 text-sm font-semibold">

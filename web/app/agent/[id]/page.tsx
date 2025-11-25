@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Navigation from '@/components/Navigation';
 import AnimatedBackground from '@/components/AnimatedBackground';
-import { Trophy, Zap, Clock, Target, Activity, TrendingUp, Shield, ChartBar, Eye, ArrowLeft, Sword, Timer } from 'lucide-react';
+import { Trophy, Zap, Clock, Target, Activity, TrendingUp, Shield, ChartBar, Eye, ArrowLeft, Sword, Timer, ChevronLeft, ChevronRight } from 'lucide-react';
 import { authenticatedFetch } from '@/lib/clientAuth';
 
 interface VersionHistory {
@@ -77,6 +77,7 @@ interface Analytics {
     draws: number;
     total: number;
   }>;
+  h2hTotal: number;
   totalMatches: number;
   versionHistory: VersionHistory[];
 }
@@ -107,18 +108,34 @@ export default function AgentAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Head-to-Head pagination
+  const [h2hPage, setH2hPage] = useState(1);
+  const [h2hPageSize, setH2hPageSize] = useState(10);
+  const [h2hTotal, setH2hTotal] = useState(0);
+  const [h2hLoading, setH2hLoading] = useState(false);
+  const [headToHead, setHeadToHead] = useState<Analytics['headToHead']>([]);
+
+  // Matches pagination
+  const [matchesPage, setMatchesPage] = useState(1);
+  const [matchesPageSize, setMatchesPageSize] = useState(20);
+  const [matchesTotal, setMatchesTotal] = useState(0);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+
   useEffect(() => {
-    // Use authenticatedFetch which handles token refresh automatically
+    setLoading(true);
     Promise.all([
-      authenticatedFetch(`/api/agents/${agentId}/analytics`).then(r => r.json()),
-      authenticatedFetch(`/api/agents/${agentId}/matches?limit=20`).then(r => r.json()),
+      authenticatedFetch(`/api/agents/${agentId}/analytics?h2hLimit=${h2hPageSize}&h2hOffset=0`).then(r => r.json()),
+      authenticatedFetch(`/api/agents/${agentId}/matches?limit=${matchesPageSize}&offset=0`).then(r => r.json()),
     ])
       .then(([analyticsData, matchesData]) => {
         if (analyticsData.error) throw new Error(analyticsData.error);
         if (matchesData.error) throw new Error(matchesData.error);
 
         setAnalytics(analyticsData);
+        setHeadToHead(analyticsData.headToHead || []);
+        setH2hTotal(analyticsData.h2hTotal || 0);
         setMatches(matchesData.matches);
+        setMatchesTotal(matchesData.pagination?.total || 0);
         setError('');
       })
       .catch(err => {
@@ -128,6 +145,38 @@ export default function AgentAnalyticsPage() {
         setLoading(false);
       });
   }, [agentId]);
+
+  useEffect(() => {
+    if (loading || !analytics) return;
+    setH2hLoading(true);
+    const h2hOffset = (h2hPage - 1) * h2hPageSize;
+
+    authenticatedFetch(`/api/agents/${agentId}/analytics?h2hLimit=${h2hPageSize}&h2hOffset=${h2hOffset}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) throw new Error(data.error);
+        setHeadToHead(data.headToHead || []);
+        setH2hTotal(data.h2hTotal || 0);
+      })
+      .catch(err => console.error('H2H fetch error:', err))
+      .finally(() => setH2hLoading(false));
+  }, [h2hPage, h2hPageSize]);
+
+  useEffect(() => {
+    if (loading || !analytics) return;
+    setMatchesLoading(true);
+    const matchesOffset = (matchesPage - 1) * matchesPageSize;
+
+    authenticatedFetch(`/api/agents/${agentId}/matches?limit=${matchesPageSize}&offset=${matchesOffset}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) throw new Error(data.error);
+        setMatches(data.matches);
+        setMatchesTotal(data.pagination?.total || 0);
+      })
+      .catch(err => console.error('Matches fetch error:', err))
+      .finally(() => setMatchesLoading(false));
+  }, [matchesPage, matchesPageSize]);
 
   if (loading) {
     return (
@@ -163,7 +212,7 @@ export default function AgentAnalyticsPage() {
     );
   }
 
-  const { agent, moveTimeStats, gameStats, extremeMoves, performanceOverTime, headToHead, versionHistory } = analytics;
+  const { agent, moveTimeStats, gameStats, extremeMoves, performanceOverTime, versionHistory } = analytics;
 
   return (
     <div className="min-h-screen relative">
@@ -171,7 +220,6 @@ export default function AgentAnalyticsPage() {
       <div className="relative z-10">
         <Navigation />
         <div className="container mx-auto py-8 max-w-7xl px-4">
-          {/* Header */}
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
@@ -193,7 +241,6 @@ export default function AgentAnalyticsPage() {
             </div>
           </div>
 
-          {/* Overall Stats */}
           {agent.ranking && (
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
               <div className="bg-gradient-to-br from-yellow-900/30 to-yellow-800/30 backdrop-blur rounded-xl p-4 border border-yellow-500/20 shadow-lg shadow-yellow-500/10">
@@ -236,7 +283,6 @@ export default function AgentAnalyticsPage() {
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            {/* Move Time Statistics */}
             <div className="bg-gray-900/50 backdrop-blur border border-purple-500/20 rounded-xl p-6 shadow-lg shadow-purple-500/10">
               <div className="flex items-center gap-2 mb-4">
                 <Timer className="w-6 h-6 text-purple-400" />
@@ -279,7 +325,6 @@ export default function AgentAnalyticsPage() {
               )}
             </div>
 
-            {/* Game Statistics */}
             <div className="bg-gray-900/50 backdrop-blur border border-purple-500/20 rounded-xl p-6 shadow-lg shadow-purple-500/10">
               <div className="flex items-center gap-2 mb-4">
                 <Trophy className="w-6 h-6 text-purple-400" />
@@ -335,7 +380,6 @@ export default function AgentAnalyticsPage() {
             </div>
           </div>
 
-          {/* Version History */}
           {versionHistory && versionHistory.length > 1 && (
             <div className="bg-gray-900/50 backdrop-blur border border-purple-500/20 rounded-xl p-6 mb-8 shadow-lg shadow-purple-500/10">
               <div className="flex items-center gap-2 mb-6">
@@ -430,14 +474,32 @@ export default function AgentAnalyticsPage() {
             </div>
           )}
 
-          {/* Head to Head Records */}
-          {headToHead.length > 0 && (
+          {(headToHead.length > 0 || h2hTotal > 0) && (
             <div className="bg-gray-900/50 backdrop-blur border border-purple-500/20 rounded-xl p-6 mb-8 shadow-lg shadow-purple-500/10">
-              <div className="flex items-center gap-2 mb-6">
-                <Sword className="w-6 h-6 text-purple-400" />
-                <h2 className="text-2xl font-bold text-white">Head-to-Head Records</h2>
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-2">
+                  <Sword className="w-6 h-6 text-purple-400" />
+                  <h2 className="text-2xl font-bold text-white">Head-to-Head Records</h2>
+                  <span className="text-sm text-gray-400">({h2hTotal} opponents)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={h2hPageSize}
+                    onChange={(e) => { setH2hPageSize(Number(e.target.value)); setH2hPage(1); }}
+                    className="bg-gray-800/50 border border-purple-500/30 text-white text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-purple-400"
+                  >
+                    <option value={10}>10 per page</option>
+                    <option value={25}>25 per page</option>
+                    <option value={50}>50 per page</option>
+                  </select>
+                </div>
               </div>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto relative">
+                {h2hLoading && (
+                  <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center z-10">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                  </div>
+                )}
                 <table className="w-full">
                   <thead className="bg-gray-900/50">
                     <tr>
@@ -481,23 +543,72 @@ export default function AgentAnalyticsPage() {
                   </tbody>
                 </table>
               </div>
+              {h2hTotal > h2hPageSize && (
+                <div className="flex items-center justify-between mt-4 pt-4 border-t border-purple-500/20">
+                  <div className="text-sm text-gray-400">
+                    Showing {((h2hPage - 1) * h2hPageSize) + 1} - {Math.min(h2hPage * h2hPageSize, h2hTotal)} of {h2hTotal}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setH2hPage(p => Math.max(1, p - 1))}
+                      disabled={h2hPage === 1}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-900/30 transition-colors"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      Previous
+                    </button>
+                    <span className="text-sm text-gray-400 px-2">
+                      Page {h2hPage} of {Math.ceil(h2hTotal / h2hPageSize)}
+                    </span>
+                    <button
+                      onClick={() => setH2hPage(p => Math.min(Math.ceil(h2hTotal / h2hPageSize), p + 1))}
+                      disabled={h2hPage >= Math.ceil(h2hTotal / h2hPageSize)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-900/30 transition-colors"
+                    >
+                      Next
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Recent Match History */}
           <div className="bg-gray-900/50 backdrop-blur border border-purple-500/20 rounded-xl p-6 shadow-lg shadow-purple-500/10">
-            <div className="flex items-center gap-2 mb-6">
-              <Trophy className="w-6 h-6 text-purple-400" />
-              <h2 className="text-2xl font-bold text-white">Recent Battle History</h2>
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-6 h-6 text-purple-400" />
+                <h2 className="text-2xl font-bold text-white">Recent Battle History</h2>
+                {matchesTotal > 0 && (
+                  <span className="text-sm text-gray-400">({matchesTotal} matches)</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={matchesPageSize}
+                  onChange={(e) => { setMatchesPageSize(Number(e.target.value)); setMatchesPage(1); }}
+                  className="bg-gray-800/50 border border-purple-500/30 text-white text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-purple-400"
+                >
+                  <option value={10}>10 per page</option>
+                  <option value={20}>20 per page</option>
+                  <option value={50}>50 per page</option>
+                </select>
+              </div>
             </div>
-            {matches.length > 0 ? (
-              <div className="space-y-3">
-                {matches.map(match => (
-                  <Link
-                    key={match.id}
-                    href={`/match/${match.id}`}
-                    className="block bg-gray-800/50 backdrop-blur hover:bg-gray-700/50 border border-purple-500/20 rounded-xl p-4 transition-all duration-200 hover:shadow-lg hover:shadow-purple-500/10"
-                  >
+            <div className="relative">
+              {matchesLoading && (
+                <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center z-10 rounded-xl">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                </div>
+              )}
+              {matches.length > 0 ? (
+                <div className="space-y-3">
+                  {matches.map(match => (
+                    <Link
+                      key={match.id}
+                      href={`/match/${match.id}`}
+                      className="block bg-gray-800/50 backdrop-blur hover:bg-gray-700/50 border border-purple-500/20 rounded-xl p-4 transition-all duration-200 hover:shadow-lg hover:shadow-purple-500/10"
+                    >
                     <div className="flex justify-between items-center">
                       <div className="flex items-center gap-4">
                         <div className={`px-4 py-2 rounded-lg font-bold text-sm border ${
@@ -547,11 +658,40 @@ export default function AgentAnalyticsPage() {
                     </div>
                   </Link>
                 ))}
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <Trophy className="w-12 h-12 text-gray-600 mx-auto mb-2" />
-                <p className="text-gray-500">No matches yet</p>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <Trophy className="w-12 h-12 text-gray-600 mx-auto mb-2" />
+                  <p className="text-gray-500">No matches yet</p>
+                </div>
+              )}
+            </div>
+            {matchesTotal > matchesPageSize && (
+              <div className="flex items-center justify-between mt-4 pt-4 border-t border-purple-500/20">
+                <div className="text-sm text-gray-400">
+                  Showing {((matchesPage - 1) * matchesPageSize) + 1} - {Math.min(matchesPage * matchesPageSize, matchesTotal)} of {matchesTotal}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setMatchesPage(p => Math.max(1, p - 1))}
+                    disabled={matchesPage === 1}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-900/30 transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    Previous
+                  </button>
+                  <span className="text-sm text-gray-400 px-2">
+                    Page {matchesPage} of {Math.ceil(matchesTotal / matchesPageSize)}
+                  </span>
+                  <button
+                    onClick={() => setMatchesPage(p => Math.min(Math.ceil(matchesTotal / matchesPageSize), p + 1))}
+                    disabled={matchesPage >= Math.ceil(matchesTotal / matchesPageSize)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-900/30 transition-colors"
+                  >
+                    Next
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             )}
           </div>

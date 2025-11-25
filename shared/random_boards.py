@@ -7,6 +7,8 @@ Generates random SYMMETRIC board configurations with:
 - Middle row empty
 - SYMMETRIC: Black pieces mirror white pieces (180-degree rotation)
 - No king in check at start
+- No mate-in-1 for either side
+- Both sides have at least 3 legal moves
 - Valid legal positions only
 """
 import random
@@ -14,7 +16,8 @@ from chessmaker.chess.base import Square, Board
 from chessmaker.chess.pieces import King, Bishop, Knight, Queen
 from extension.piece_right import Right
 from extension.piece_pawn import Pawn_Q
-from extension.board_utils import list_legal_moves_for
+from extension.board_utils import list_legal_moves_for, copy_piece_move
+from extension.board_rules import get_result
 from itertools import cycle
 
 # CRITICAL: Import the SAME global player objects used in samples.py
@@ -24,10 +27,9 @@ from samples import white, black
 
 def is_king_in_check(board_squares, king_player):
     """
-    Check if a king is in check on the given board.
+    Check if a king is under attack using direct piece attack detection.
     Returns True if the king is under attack.
     """
-    # Create a Board object to use the chess engine's move validation
     players = [white, black]
     board = Board(
         squares=board_squares,
@@ -37,47 +39,86 @@ def is_king_in_check(board_squares, king_player):
 
     # Find the king position
     king_pos = None
-    for y, row in enumerate(board_squares):
-        for x, square in enumerate(row):
-            if square.piece and isinstance(square.piece, King) and square.piece.player == king_player:
-                king_pos = (x, y)
-                break
-        if king_pos:
+    for piece in board.get_pieces():
+        if isinstance(piece, King) and piece.player == king_player:
+            king_pos = (piece.position.x, piece.position.y)
             break
 
     if not king_pos:
-        return True  # No king found = invalid board
+        return True  # No king = invalid
 
-    # Get opponent player
+    # Get opponent
     opponent = black if king_player == white else white
 
-    # Check if any opponent piece can attack the king's position
-    for y, row in enumerate(board_squares):
-        for x, square in enumerate(row):
-            if square.piece and square.piece.player == opponent:
-                piece = square.piece
-                # Get all legal moves for this opponent piece
-                try:
-                    legal_moves = list_legal_moves_for(board, opponent)
-                    for moving_piece, move in legal_moves:
-                        if moving_piece == piece:
-                            # Check if this move attacks the king's position
-                            if hasattr(move, 'position') and move.position.x == king_pos[0] and move.position.y == king_pos[1]:
-                                return True
-                except:
-                    pass
+    # Check if any opponent piece can reach the king's square
+    for piece in board.get_player_pieces(opponent):
+        for move in piece.get_move_options():
+            if hasattr(move, 'position'):
+                if move.position.x == king_pos[0] and move.position.y == king_pos[1]:
+                    return True
 
     return False
 
 
-def generate_random_board(seed=None, max_attempts=50):
+def has_mate_in_one(board_squares, player):
     """
-    Generate a random SYMMETRIC board configuration
+    Check if the given player has a mate-in-1 from the current position.
+    Returns True if any legal move leads to checkmate.
+    """
+    players = [white, black]
+    board = Board(
+        squares=board_squares,
+        players=players,
+        turn_iterator=cycle(players),
+    )
+
+    legal_moves = list_legal_moves_for(board, player)
+
+    for piece, move in legal_moves:
+        # Clone board and simulate the move
+        board_clone = board.clone()
+        _, piece_clone, move_clone = copy_piece_move(board_clone, piece, move)
+
+        if piece_clone and move_clone:
+            piece_clone.move(move_clone)
+            result = get_result(board_clone)
+
+            if result and 'checkmate' in result.lower():
+                return True
+
+    return False
+
+
+def is_position_playable(board_squares, min_moves_per_side=3):
+    """
+    Check if both sides have at least min_moves_per_side legal moves.
+    Returns True if the position has adequate playability.
+    """
+    players = [white, black]
+    board = Board(
+        squares=board_squares,
+        players=players,
+        turn_iterator=cycle(players),
+    )
+
+    for player in players:
+        legal_moves = list_legal_moves_for(board, player)
+        if len(legal_moves) < min_moves_per_side:
+            return False
+
+    return True
+
+
+def generate_random_board(seed=None, max_attempts=100):
+    """
+    Generate a random SYMMETRIC board configuration with improved validation:
     - Pieces only on top 2 rows (black) and bottom 2 rows (white)
     - Always 2 kings (one per side)
     - SYMMETRIC: Black pieces mirror white pieces (rotated 180 degrees)
     - 3-8 pieces per side
-    - Ensures no king is in check at start
+    - NO king in check at start
+    - NO mate-in-1 for either side
+    - Both sides have at least 3 legal moves
     - Retries up to max_attempts times to find a valid board
     """
     if seed is not None:
@@ -131,15 +172,34 @@ def generate_random_board(seed=None, max_attempts=50):
             piece_class = white_piece_types[i]
             board[black_y][black_x] = Square(piece_class(black))
 
-        # Validate: check if either king is in check
+        # VALIDATION CHECKS (in order of computational cost)
+
+        # Check 1: No king in check (using fixed detection)
         white_in_check = is_king_in_check(board, white)
         black_in_check = is_king_in_check(board, black)
 
-        if not white_in_check and not black_in_check:
-            print(f"Generated valid symmetric random board on attempt {attempt + 1}")
-            return board
-        else:
-            print(f"Attempt {attempt + 1}: Board invalid (white_check={white_in_check}, black_check={black_in_check}), retrying...")
+        if white_in_check or black_in_check:
+            print(f"Attempt {attempt + 1}: King in check (white={white_in_check}, black={black_in_check}), retrying...")
+            continue
+
+        # Check 2: Adequate legal moves for both sides (min 3 per side)
+        if not is_position_playable(board, min_moves_per_side=3):
+            print(f"Attempt {attempt + 1}: Insufficient legal moves, retrying...")
+            continue
+
+        # Check 3: No mate-in-1 for white (who moves first)
+        if has_mate_in_one(board, white):
+            print(f"Attempt {attempt + 1}: White has mate-in-1, retrying...")
+            continue
+
+        # Check 4: No mate-in-1 for black
+        if has_mate_in_one(board, black):
+            print(f"Attempt {attempt + 1}: Black has mate-in-1, retrying...")
+            continue
+
+        # All checks passed
+        print(f"Generated valid balanced board on attempt {attempt + 1}")
+        return board
 
     # If we couldn't generate a valid board after max_attempts, fall back to a sample board
     print(f"WARNING: Could not generate valid random board after {max_attempts} attempts, using sample board")

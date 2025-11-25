@@ -612,6 +612,7 @@ export default function AgentAnalyticsPage() {
                     <div className="flex justify-between items-center">
                       <div className="flex items-center gap-4">
                         <div className={`px-4 py-2 rounded-lg font-bold text-sm border ${
+                          match.status === 'error' ? 'bg-orange-900/50 text-orange-300 border-orange-500/30' :
                           match.result === 'win' ? 'bg-green-900/50 text-green-300 border-green-500/30' :
                           match.result === 'loss' ? 'bg-red-900/50 text-red-300 border-red-500/30' :
                           match.result === 'draw' || match.result === 'stalemate' ||
@@ -619,7 +620,7 @@ export default function AgentAnalyticsPage() {
                           'bg-gray-800/50 text-gray-300 border-gray-600/30' :
                           'bg-blue-900/50 text-blue-300 border-blue-500/30'
                         }`}>
-                          {match.result.toUpperCase().replace(/_/g, ' ')}
+                          {match.status === 'error' ? 'ERROR' : match.result.toUpperCase().replace(/_/g, ' ')}
                         </div>
                         <div>
                           <div className="text-white font-semibold flex items-center gap-2">

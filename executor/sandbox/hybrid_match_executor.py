@@ -240,13 +240,24 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                         move_pos = None
                     print(f"[HYRBIDF] response match={match_id} move={moves} player=black piece={type(piece).__name__ if piece else None} from={piece_pos} to={move_pos} elapsed={elapsed:.3f}s", flush=True)
 
-            # Handle timeout or invalid move with random selection
-            if timed_out or not p_piece or not p_move_opt:
+            # Handle timeout - agent forfeits the game
+            if timed_out:
+                winner = "black" if player.name == "white" else "white"
+                print(f"{player.name} TIMEOUT - forfeiting game to {winner}")
+                result = {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': 'timeout',
+                    'game_states': game_states
+                }
+                break
+
+            # Handle invalid move with random selection (only for invalid moves, not timeouts)
+            if not p_piece or not p_move_opt:
                 if legal_moves:
                     random_piece, random_move = random.choice(legal_moves)
                     p_piece, p_move_opt = random_piece, random_move
-                    reason = "timeout" if timed_out else "invalid move"
-                    print(f"{player.name} {reason} - selected random move")
+                    print(f"{player.name} invalid move - selected random move")
                 else:
                     winner = "black" if player.name == "white" else "white"
                     result = {

@@ -98,32 +98,43 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
 
     try:
         exec(white_code, white_module.__dict__)
+    except Exception as e:
+        import traceback
+        return {
+            'winner': 'black',
+            'moves': 0,
+            'termination': 'white_error',
+            'error': f'White agent failed to load: {str(e)}\n{traceback.format_exc()}',
+            'game_states': []
+        }
+
+    try:
         exec(black_code, black_module.__dict__)
     except Exception as e:
         import traceback
         return {
-            'winner': None,
+            'winner': 'white',
             'moves': 0,
-            'termination': 'error',
-            'error': f'Failed to load agent code: {str(e)}\n{traceback.format_exc()}',
+            'termination': 'black_error',
+            'error': f'Black agent failed to load: {str(e)}\n{traceback.format_exc()}',
             'game_states': []
         }
 
     # Extract agent functions
     if 'agent' not in white_module.__dict__:
         return {
-            'winner': None,
+            'winner': 'black',
             'moves': 0,
-            'termination': 'error',
+            'termination': 'white_error',
             'error': 'White agent code does not define an "agent" function',
             'game_states': []
         }
 
     if 'agent' not in black_module.__dict__:
         return {
-            'winner': None,
+            'winner': 'white',
             'moves': 0,
-            'termination': 'error',
+            'termination': 'black_error',
             'error': 'Black agent code does not define an "agent" function',
             'game_states': []
         }
@@ -179,7 +190,7 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
                     [white_ply, AGENT_TIMEOUT_SECONDS],
                 )
                 if timed_out:
-                    print(f"White agent TIMEOUT on move {moves} ({move_time_ms}ms > {AGENT_TIMEOUT_SECONDS*1000}ms) - choosing random move")
+                    print(f"White agent TIMEOUT on move {moves} - will forfeit game")
                 white_ply += 1
             else:
                 p_piece, p_move_opt, move_time_ms, timed_out = execute_agent_with_timeout(
@@ -190,17 +201,27 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
                     [black_ply, AGENT_TIMEOUT_SECONDS],
                 )
                 if timed_out:
-                    print(f"Black agent TIMEOUT on move {moves} ({move_time_ms}ms > {AGENT_TIMEOUT_SECONDS*1000}ms) - choosing random move")
+                    print(f"Black agent TIMEOUT on move {moves} - will forfeit game")
                 black_ply += 1
 
-            # If timed out or invalid move returned, choose random legal move
-            if timed_out or not p_piece or not p_move_opt:
+            # If timed out, agent forfeits the game
+            if timed_out:
+                winner = "black" if player.name == "white" else "white"
+                print(f"{player.name} TIMEOUT - forfeiting game to {winner}")
+                return {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': 'timeout',
+                    'game_states': game_states
+                }
+
+            # If invalid move returned, choose random legal move
+            if not p_piece or not p_move_opt:
                 if legal_moves:
                     # Choose random legal move
                     random_piece, random_move = random.choice(legal_moves)
                     p_piece, p_move_opt = random_piece, random_move
-                    reason = "timeout" if timed_out else "invalid move"
-                    print(f"{player.name} {reason} - selected random move: {random_piece.name if random_piece else 'None'}")
+                    print(f"{player.name} invalid move - selected random move: {random_piece.name if random_piece else 'None'}")
                 else:
                     # No legal moves available - agent loses
                     winner = "black" if player.name == "white" else "white"
@@ -312,10 +333,11 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
 
         except Exception as e:
             winner = "black" if player.name == "white" else "white"
+            termination = "white_error" if player.name == "white" else "black_error"
             return {
                 'winner': winner,
                 'moves': moves,
-                'termination': 'error',
+                'termination': termination,
                 'error': str(e),
                 'game_states': game_states
             }

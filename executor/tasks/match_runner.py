@@ -214,70 +214,31 @@ def run_match_task(match_id: str):
                 schedule_round_robin.delay()
             return
 
-        # Check if match ended in error - count as loss for the agent that errored
-        if result['termination'] == 'error':
+        # Check if match ended in error with insufficient moves (< 2 per agent = < 4 total)
+        # These games are meaningless and should be deleted entirely
+        is_error = result['termination'] in ('error', 'white_error', 'black_error')
+        if is_error and result['moves'] < 4:
             error_msg = result.get('error', 'Unknown error during match execution')
-            winner = result.get('winner')  # Already set in agent_executor.py
-            print(f"Match {match_id} ended in error (winner: {winner}): {error_msg}")
+            print(f"Match {match_id} ended in error with only {result['moves']} moves: {error_msg}")
+            print(f"Deleting insufficient-moves error match {match_id} from database")
 
-            # Validate game has at least 4 moves even for error games
-            # Games with 3 or fewer moves are invalid (likely unfair balance or starting position issues)
-            if result.get('moves', 0) <= 3:
-                print(f"Match {match_id} INVALID (error game): Only {result.get('moves', 0)} move(s), marking as error")
-                cur.execute("""
-                    UPDATE matches
-                    SET status = 'error',
-                        termination = 'invalid_game',
-                        completed_at = NOW()
-                    WHERE id = %s
-                """, (match_id,))
+            try:
+                cur.execute("DELETE FROM game_states WHERE match_id = %s", (match_id,))
                 conn.commit()
+            except Exception as state_error:
+                print(f"Error deleting game states for error match {match_id}: {state_error}")
+                conn.rollback()
 
-                # Don't update ELO for invalid games
-                # But do trigger rescheduling for matchmaking
-                if match.get('match_type') == 'matchmaking':
-                    schedule_round_robin.delay()
-                return
+            try:
+                cur.execute("DELETE FROM matches WHERE id = %s", (match_id,))
+                conn.commit()
+                print(f"Removed error match {match_id} from matches table")
+            except Exception as delete_error:
+                print(f"Error deleting error match {match_id}: {delete_error}")
+                conn.rollback()
 
-            # Record any game states that were created before the error
-            for state in result.get('game_states', []):
-                evaluation = calculate_evaluation(state['board_state'], state['move_number'] % 2)
-
-                try:
-                    cur.execute("""
-                        INSERT INTO game_states (id, match_id, move_number, board_state, move_time_ms, move_notation, evaluation)
-                        VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (match_id, move_number) DO NOTHING
-                    """, (
-                        match_id,
-                        state['move_number'],
-                        json.dumps(state['board_state']),
-                        state.get('move_time_ms', 0),
-                        state.get('notation', ''),
-                        evaluation
-                    ))
-                    conn.commit()
-                except Exception as state_error:
-                    print(f"Error inserting game state: {state_error}")
-                    conn.rollback()
-
-            # Update match with error result - but still record the winner
-            cur.execute("""
-                UPDATE matches
-                SET status = 'completed',
-                    winner = %s,
-                    moves = %s,
-                    termination = 'error',
-                    completed_at = NOW()
-                WHERE id = %s
-            """, (winner, result.get('moves', 0), match_id))
-            conn.commit()
-
-            # Trigger ELO update for matchmaking games (agent that errored loses rating)
             if match.get('match_type') == 'matchmaking':
-                update_match_ratings.delay(match_id)
                 schedule_round_robin.delay()
-
             return
 
         # Insert game states with delay for exhibition matches
@@ -308,20 +269,25 @@ def run_match_task(match_id: str):
                 time.sleep(move_delay)
 
         # Validate game has at least 4 moves to be considered legitimate
-        # Games with 3 or fewer moves are invalid (likely unfair balance or starting position issues)
+        # Games with 3 or fewer moves are invalid (< 2 per agent) - delete them entirely
         if result['moves'] <= 3:
-            print(f"Match {match_id} INVALID: Only {result['moves']} move(s), marking as error")
-            cur.execute("""
-                UPDATE matches
-                SET status = 'error',
-                    termination = 'invalid_game',
-                    completed_at = NOW()
-                WHERE id = %s
-            """, (match_id,))
-            conn.commit()
+            print(f"Match {match_id} INVALID: Only {result['moves']} move(s), deleting from database")
 
-            # Don't update ELO for invalid games
-            # But do trigger rescheduling for matchmaking
+            try:
+                cur.execute("DELETE FROM game_states WHERE match_id = %s", (match_id,))
+                conn.commit()
+            except Exception as state_error:
+                print(f"Error deleting game states for invalid match {match_id}: {state_error}")
+                conn.rollback()
+
+            try:
+                cur.execute("DELETE FROM matches WHERE id = %s", (match_id,))
+                conn.commit()
+                print(f"Removed invalid match {match_id} from matches table")
+            except Exception as delete_error:
+                print(f"Error deleting invalid match {match_id}: {delete_error}")
+                conn.rollback()
+
             if match.get('match_type') == 'matchmaking':
                 schedule_round_robin.delay()
             return
@@ -491,6 +457,10 @@ def schedule_round_robin():
         scheduled_count = 0
         max_attempts = 3  # Limit to prevent race conditions (schedule max 3 per round)
 
+        # ELO-based matchmaking settings
+        ELO_RANGE = 200  # Initial ELO range for matching
+        ELO_RANGE_MULTIPLIERS = [1, 2, 3]  # 200, 400, 600 ELO ranges
+
         for attempt in range(max_attempts):
             if len(all_agents) < 2:
                 print(f"Not enough agents to schedule more matches")
@@ -501,14 +471,46 @@ def schedule_round_robin():
                 print(f"All match slots filled (scheduled {scheduled_count} this round)")
                 break
 
-            # Pick two agents with lowest active match counts (already sorted)
-            # Agents are sorted by active_matches ASC, so first agents have fewest matches
-            agent1 = all_agents[0]
-            agent2 = all_agents[1] if len(all_agents) > 1 else None
+            # ELO-based matching: Find best pair within ELO range
+            # Prioritize agents with fewer active matches, then match by ELO
+            matched_pair = None
+            match_elo_diff = None
 
-            if not agent2:
+            # Sort by fewest active matches first
+            all_agents.sort(key=lambda x: (x['active_matches'], random.random()))
+
+            # Try to find a pair within progressively wider ELO ranges
+            for range_mult in ELO_RANGE_MULTIPLIERS:
+                current_range = ELO_RANGE * range_mult
+                for i, agent1 in enumerate(all_agents):
+                    for j, agent2 in enumerate(all_agents):
+                        if i >= j:
+                            continue
+
+                        elo_diff = abs(agent1['elo_rating'] - agent2['elo_rating'])
+
+                        if elo_diff <= current_range:
+                            matched_pair = (agent1, agent2)
+                            match_elo_diff = elo_diff
+                            break
+
+                    if matched_pair:
+                        break
+                if matched_pair:
+                    print(f"ELO match found within {current_range} range (diff: {match_elo_diff})")
+                    break
+
+            # Fallback: match any two agents if no ELO-appropriate match
+            if not matched_pair and len(all_agents) >= 2:
+                matched_pair = (all_agents[0], all_agents[1])
+                match_elo_diff = abs(all_agents[0]['elo_rating'] - all_agents[1]['elo_rating'])
+                print(f"No ELO match within range, using fallback (diff: {match_elo_diff})")
+
+            if not matched_pair:
                 print(f"Not enough agents for pairing")
                 break
+
+            agent1, agent2 = matched_pair
 
             # Randomly assign colors for fairness (50/50 chance)
             if random.random() < 0.5:
@@ -555,8 +557,8 @@ def schedule_round_robin():
             # Re-sort by active matches for next iteration
             all_agents.sort(key=lambda x: (x['active_matches'], random.random()))
 
-            # Enhanced logging
-            print(f"Scheduled game #{scheduled_count + 1}: {white_agent['name']} ({white_agent['execution_mode']}, active={white_agent['active_matches']}) vs {black_agent['name']} ({black_agent['execution_mode']}, active={black_agent['active_matches']})")
+            # Enhanced logging with ELO info
+            print(f"Scheduled game #{scheduled_count + 1}: {white_agent['name']} (ELO={white_agent['elo_rating']}, {white_agent['execution_mode']}) vs {black_agent['name']} (ELO={black_agent['elo_rating']}, {black_agent['execution_mode']}) [ELO diff: {match_elo_diff}]")
 
             # Queue task
             run_match_task.delay(new_match['id'])

@@ -26,7 +26,8 @@ from sandbox.hybrid_executor import AgentDisconnectedError, LocalAgentBridge, ge
 # Agent timeout in seconds - read from environment
 AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
 # Add buffer for network/system overhead when checking timeouts
-TIMEOUT_CHECK_BUFFER = 0.5
+# 1.0s buffer accounts for: network latency, board reconstruction, message serialization
+TIMEOUT_CHECK_BUFFER = 1.0
 
 
 def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_name,
@@ -162,7 +163,7 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
             if player.name == "white":
                 print(f"[HYRBIDF] request move match={match_id} move={moves} player=white exec={white_execution_mode} agent={white_agent_id}", flush=True)
                 try:
-                    piece, move, elapsed = get_agent_move(
+                    piece, move, elapsed, explicit_timeout = get_agent_move(
                         agent_code=white_code if white_execution_mode == 'server' else None,
                         agent_id=white_agent_id,
                         execution_mode=white_execution_mode,
@@ -186,11 +187,11 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                 p_piece = piece
                 p_move_opt = move
                 move_time_ms = elapsed * 1000  # Convert to ms
-                # Use > instead of >= and add buffer to prevent false positives from network/system overhead
-                timed_out = (elapsed > AGENT_TIMEOUT_SECONDS + TIMEOUT_CHECK_BUFFER)
+                # Timeout if: agent explicitly reported timeout OR elapsed exceeds threshold
+                timed_out = explicit_timeout or (elapsed > AGENT_TIMEOUT_SECONDS + TIMEOUT_CHECK_BUFFER)
 
                 if timed_out:
-                    print(f"White agent ({white_execution_mode}) TIMEOUT on move {moves} (elapsed: {elapsed:.3f}s)")
+                    print(f"White agent ({white_execution_mode}) TIMEOUT on move {moves} (elapsed: {elapsed:.3f}s, explicit: {explicit_timeout})")
                 else:
                     if piece and getattr(piece, "position", None):
                         piece_pos = f"{piece.position.x},{piece.position.y}"
@@ -205,7 +206,7 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
             else:
                 print(f"[HYRBIDF] request move match={match_id} move={moves} player=black exec={black_execution_mode} agent={black_agent_id}", flush=True)
                 try:
-                    piece, move, elapsed = get_agent_move(
+                    piece, move, elapsed, explicit_timeout = get_agent_move(
                         agent_code=black_code if black_execution_mode == 'server' else None,
                         agent_id=black_agent_id,
                         execution_mode=black_execution_mode,
@@ -229,11 +230,11 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                 p_piece = piece
                 p_move_opt = move
                 move_time_ms = elapsed * 1000  # Convert to ms
-                # Use > instead of >= and add buffer to prevent false positives from network/system overhead
-                timed_out = (elapsed > AGENT_TIMEOUT_SECONDS + TIMEOUT_CHECK_BUFFER)
+                # Timeout if: agent explicitly reported timeout OR elapsed exceeds threshold
+                timed_out = explicit_timeout or (elapsed > AGENT_TIMEOUT_SECONDS + TIMEOUT_CHECK_BUFFER)
 
                 if timed_out:
-                    print(f"Black agent ({black_execution_mode}) TIMEOUT on move {moves} (elapsed: {elapsed:.3f}s)")
+                    print(f"Black agent ({black_execution_mode}) TIMEOUT on move {moves} (elapsed: {elapsed:.3f}s, explicit: {explicit_timeout})")
                 else:
                     if piece and getattr(piece, "position", None):
                         piece_pos = f"{piece.position.x},{piece.position.y}"
@@ -258,56 +259,34 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                 }
                 break
 
-            # Handle invalid move with random selection (only for invalid moves, not timeouts)
+            # Handle invalid move - agent forfeits
             if not p_piece or not p_move_opt:
-                if legal_moves:
-                    random_piece, random_move = random.choice(legal_moves)
-                    p_piece, p_move_opt = random_piece, random_move
-                    print(f"{player.name} invalid move - selected random move")
-                else:
-                    winner = "black" if player.name == "white" else "white"
-                    result = {
-                        'winner': winner,
-                        'moves': moves,
-                        'termination': 'no_moves',
-                        'game_states': game_states
-                    }
-                    break
+                winner = "black" if player.name == "white" else "white"
+                termination = "white_invalid" if player.name == "white" else "black_invalid"
+                print(f"{player.name} returned invalid move (None) - forfeiting game to {winner}")
+                result = {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': termination,
+                    'game_states': game_states
+                }
+                break
 
             # Copy and execute move
             board, piece, move_opt = copy_piece_move(board, p_piece, p_move_opt)
 
             if not piece or not move_opt:
-                # copy_piece_move failed - move was invalid, use random fallback
-                print(f"{player.name} returned move that failed validation - selecting random move")
-                if legal_moves:
-                    random_piece, random_move = random.choice(legal_moves)
-                    p_piece, p_move_opt = random_piece, random_move
-                    board, piece, move_opt = copy_piece_move(board, p_piece, p_move_opt)
-
-                    if not piece or not move_opt:
-                        # Even random move failed - this should never happen but handle it
-                        winner = "black" if player.name == "white" else "white"
-                        termination = "white_error" if player.name == "white" else "black_error"
-                        print(f"CRITICAL: Random move also failed for {player.name}")
-                        result = {
-                            'winner': winner,
-                            'moves': moves,
-                            'termination': termination,
-                            'error': f'{player.name} - critical error: random move failed',
-                            'game_states': game_states
-                        }
-                        break
-                else:
-                    # No legal moves available
-                    winner = "black" if player.name == "white" else "white"
-                    result = {
-                        'winner': winner,
-                        'moves': moves,
-                        'termination': 'no_moves',
-                        'game_states': game_states
-                    }
-                    break
+                # copy_piece_move failed - move was invalid, agent forfeits
+                winner = "black" if player.name == "white" else "white"
+                termination = "white_invalid" if player.name == "white" else "black_invalid"
+                print(f"{player.name} returned invalid move (failed validation) - forfeiting game to {winner}")
+                result = {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': termination,
+                    'game_states': game_states
+                }
+                break
 
             # Capture original position before applying move
             from_x = piece.position.x

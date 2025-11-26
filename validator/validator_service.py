@@ -103,7 +103,7 @@ def validate_agent_in_temp_env(code: str) -> tuple[bool, str | None, int]:
 
                 try:
                     future = executor.submit(agent_func, board.clone(), player, get_default_agent_var())
-                    result = future.result(timeout=VALIDATION_TIMEOUT / 4)  # Split timeout across tests
+                    result = future.result(timeout=VALIDATION_TIMEOUT)
 
                     # Validate result format
                     if result is None or not isinstance(result, tuple) or len(result) != 2:

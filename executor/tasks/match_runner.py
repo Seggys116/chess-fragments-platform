@@ -270,7 +270,8 @@ def run_match_task(match_id: str):
 
         # Validate game has at least 4 moves to be considered legitimate
         # Games with 3 or fewer moves are invalid (< 2 per agent) - delete them entirely
-        if result['moves'] <= 3:
+        # EXCEPTION: Timeout games are always valid - agent forfeited by timing out
+        if result['moves'] <= 3 and result['termination'] != 'timeout':
             print(f"Match {match_id} INVALID: Only {result['moves']} move(s), deleting from database")
 
             try:

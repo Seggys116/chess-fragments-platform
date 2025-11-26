@@ -14,9 +14,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'shared'))
 from constants import get_default_agent_var
 
 REDIS_URL = 'redis://redis:6379'
-# Move timeout - read from environment (slightly higher than agent timeout for network overhead)
+# Move timeout - read from environment
 AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
-MOVE_TIMEOUT = AGENT_TIMEOUT_SECONDS + 0.5  # Add 0.5s buffer for network/communication
+# Server-side timeout: agent timeout + buffer for dispatch delays, network, and response routing
+# This accounts for: Redis queue delays, WebSocket forwarding, network latency
+# Agent still has strict 14s enforced locally - this just prevents premature server-side timeout
+MOVE_TIMEOUT = AGENT_TIMEOUT_SECONDS + 5.0  # 19s total server wait time
 
 # Game state cache: stores initial board + move history per game for local agents
 # Format: game_id -> {'initial_board': {...}, 'moves': [...]}
@@ -40,10 +43,11 @@ class LocalAgentBridge:
         self.redis_client = redis.from_url(REDIS_URL, decode_responses=True)
         self.pubsub = self.redis_client.pubsub()
 
-    def request_move(self, agent_id: str, board_state: Dict, player: str, var: Dict, game_id: str) -> Optional[Tuple[Dict, float]]:
+    def request_move(self, agent_id: str, board_state: Dict, player: str, var: Dict, game_id: str) -> Optional[Tuple[Dict, float, bool]]:
         """
         Request a move from a local agent via WebSocket
-        Returns: (move_data, elapsed_time) or None on timeout/error
+        Returns: (move_data, elapsed_time, explicit_timeout) or None on disconnect
+        - explicit_timeout is True if agent explicitly reported timeout
         """
         request_id = str(uuid.uuid4())
         response_channel = f'move_response:{request_id}'
@@ -86,15 +90,26 @@ class LocalAgentBridge:
                                 move_data = payload.get('move')
                                 agent_elapsed = payload.get('elapsed')
                                 move_received = True
+                                # Trust agent's reported time for computation (not affected by Redis/network)
+                                # Server time includes network latency which shouldn't penalize the agent
+                                # Only flag if agent claims impossibly short time (< 0.001s) - likely a bug
                                 if agent_elapsed is not None:
-                                    return (move_data, agent_elapsed)
-                                return (move_data, elapsed)
+                                    if agent_elapsed < 0.001:
+                                        # Suspiciously fast - use server time
+                                        print(f"[HYRBIDF] time-suspicious agent={agent_id} agent_elapsed={agent_elapsed:.3f}s server_elapsed={elapsed:.3f}s (using server)", flush=True)
+                                        return (move_data, elapsed, False)
+                                    if agent_elapsed > elapsed + 1.0:
+                                        # Agent claims longer than round-trip - something wrong, log but use agent's
+                                        print(f"[HYRBIDF] time-anomaly agent={agent_id} agent_elapsed={agent_elapsed:.3f}s server_elapsed={elapsed:.3f}s (using agent)", flush=True)
+                                    return (move_data, agent_elapsed, False)
+                                return (move_data, elapsed, False)
                             if response_type == 'timeout':
-                                print(f"Local agent {agent_id} timed out")
-                                return (None, elapsed)
+                                # Agent explicitly reported timeout - flag it
+                                print(f"Local agent {agent_id} explicitly timed out")
+                                return (None, elapsed, True)
                             if response_type == 'error':
                                 print(f"Local agent {agent_id} error: {payload.get('error')}")
-                                return (None, elapsed)
+                                return (None, elapsed, False)
                             if response_type == 'disconnected':
                                 raise AgentDisconnectedError(agent_id, payload.get('gameId'), payload.get('reason'))
                         elif channel == disconnect_channel:
@@ -115,10 +130,10 @@ class LocalAgentBridge:
             except Exception as unsubscribe_error:
                 print(f"[HYRBIDF] redis-unsubscribe failed channel={response_channel} err={unsubscribe_error}", flush=True)
 
-        # Timeout - return actual elapsed time
+        # Communication timeout - server didn't get a response in time
         elapsed = time.time() - start_time
-        print(f"Move request timed out for local agent {agent_id}")
-        return (None, elapsed)
+        print(f"Move request communication timed out for local agent {agent_id}")
+        return (None, elapsed, True)
 
     def notify_game_start(self, agent_id: str, game_id: str, white: str, black: str):
         """Notify local agent that a game has started"""
@@ -160,7 +175,8 @@ def get_agent_move(agent_code: Optional[str], agent_id: str, execution_mode: str
         agent_func: Pre-loaded agent function (for server agents to preserve globals)
 
     Returns:
-        Tuple of (piece, move, elapsed_time) or (None, None, elapsed_time) on error
+        Tuple of (piece, move, elapsed_time, explicit_timeout)
+        - explicit_timeout is True if agent explicitly reported timeout
     """
     if execution_mode == 'local':
         # Use Redis bridge to communicate with local agent
@@ -181,7 +197,7 @@ def get_agent_move(agent_code: Optional[str], agent_id: str, execution_mode: str
             bridge.close()
 
         if result:
-            move_data, elapsed = result
+            move_data, elapsed, explicit_timeout = result
             if move_data:
                 # Debug: Log what the agent sent back
                 piece_pos = move_data.get('piecePosition', {})
@@ -193,13 +209,13 @@ def get_agent_move(agent_code: Optional[str], agent_id: str, execution_mode: str
 
                 # Move validation successful - history will be updated in match executor after move is applied
 
-                return (piece, move, elapsed)
+                return (piece, move, elapsed, False)
             else:
                 # Agent timed out or errored, but we have elapsed time
-                return (None, None, elapsed)
+                return (None, None, elapsed, explicit_timeout)
         else:
             # This should not happen anymore, but keep as fallback
-            return (None, None, MOVE_TIMEOUT)
+            return (None, None, MOVE_TIMEOUT, True)
 
     else:
         if agent_func is None:
@@ -217,7 +233,7 @@ def get_agent_move(agent_code: Optional[str], agent_id: str, execution_mode: str
             var,
         )
         elapsed = time_ms / 1000.0 if time_ms else AGENT_TIMEOUT_SECONDS
-        return (piece, move, elapsed)
+        return (piece, move, elapsed, timed_out)
 
 
 def init_game_state(game_id: str, board):

@@ -221,56 +221,31 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
                     'game_states': game_states
                 }
 
-            # If invalid move returned, choose random legal move
+            # If invalid move returned, agent forfeits
             if not p_piece or not p_move_opt:
-                if legal_moves:
-                    # Choose random legal move
-                    random_piece, random_move = random.choice(legal_moves)
-                    p_piece, p_move_opt = random_piece, random_move
-                    print(f"{player.name} invalid move - selected random move: {random_piece.name if random_piece else 'None'}")
-                else:
-                    # No legal moves available - agent loses
-                    winner = "black" if player.name == "white" else "white"
-                    print(f"{player.name} has no legal moves available")
-                    return {
-                        'winner': winner,
-                        'moves': moves,
-                        'termination': 'no_moves',
-                        'game_states': game_states
-                    }
+                winner = "black" if player.name == "white" else "white"
+                termination = "white_invalid" if player.name == "white" else "black_invalid"
+                print(f"{player.name} returned invalid move (None) - forfeiting game to {winner}")
+                return {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': termination,
+                    'game_states': game_states
+                }
 
             board, piece, move_opt = copy_piece_move(board, p_piece, p_move_opt)
 
             if (not piece) or (not move_opt):
-                # copy_piece_move failed - move was invalid, use random fallback
-                print(f"{player.name} returned move that failed validation - selecting random move")
-                if legal_moves:
-                    random_piece, random_move = random.choice(legal_moves)
-                    p_piece, p_move_opt = random_piece, random_move
-                    board, piece, move_opt = copy_piece_move(board, p_piece, p_move_opt)
-
-                    if (not piece) or (not move_opt):
-                        # Even random move failed - this should never happen but handle it
-                        winner = "black" if player.name == "white" else "white"
-                        termination = "white_error" if player.name == "white" else "black_error"
-                        print(f"CRITICAL: Random move also failed for {player.name}")
-                        return {
-                            'winner': winner,
-                            'moves': moves,
-                            'termination': termination,
-                            'error': f'{player.name} - critical error: random move failed',
-                            'game_states': game_states
-                        }
-                else:
-                    # No legal moves available
-                    winner = "black" if player.name == "white" else "white"
-                    print(f"{player.name} has no legal moves available")
-                    return {
-                        'winner': winner,
-                        'moves': moves,
-                        'termination': 'no_moves',
-                        'game_states': game_states
-                    }
+                # copy_piece_move failed - move was invalid, agent forfeits
+                winner = "black" if player.name == "white" else "white"
+                termination = "white_invalid" if player.name == "white" else "black_invalid"
+                print(f"{player.name} returned invalid move (failed validation) - forfeiting game to {winner}")
+                return {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': termination,
+                    'game_states': game_states
+                }
 
             # Execute move
             piece.move(move_opt)

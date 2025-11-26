@@ -536,15 +536,15 @@ class LocalAgentConnector:
             player_data = message.get("player")
             var_data = message.get("var", {})
 
-            # Time the agent's move
-            start_time = time.time()
-
             # Call the agent function with timeout
             try:
-                # Reconstruct board from JSON data
+                # Reconstruct board from JSON data (before timing - not counted against agent)
                 board = self.reconstruct_board_from_json(board_data)
                 # Find the correct player by name (NOT by index!)
                 player = next((p for p in board.players if p.name == player_data), board.players[0])
+
+                # Time ONLY the agent's computation, not board reconstruction
+                start_time = time.time()
 
                 # Call agent with strict timeout
                 piece, move = await asyncio.wait_for(

@@ -33,7 +33,8 @@ JWT_SECRET = os.getenv('JWT_SECRET', os.getenv('NEXTAUTH_SECRET', 'dev_jwt_secre
 # Timeouts - all based on AGENT_TIMEOUT_SECONDS environment variable
 AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
 HEARTBEAT_TIMEOUT = AGENT_TIMEOUT_SECONDS * 5  # 5x agent timeout for heartbeat
-MOVE_TIMEOUT = AGENT_TIMEOUT_SECONDS + 0.5  # Agent timeout + 0.5s buffer for communication
+# Server-side timeout: agent timeout + buffer for dispatch delays and response routing
+MOVE_TIMEOUT = AGENT_TIMEOUT_SECONDS + 5.0  # 19s total - accounts for executor dispatch delays
 AUTH_TIMEOUT = AGENT_TIMEOUT_SECONDS * 3  # 3x agent timeout for authentication
 
 # Security configuration

@@ -5,7 +5,9 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Navigation from '@/components/Navigation';
 import AnimatedBackground from '@/components/AnimatedBackground';
+import ExportButton from '@/components/ExportButton';
 import { Trophy, Zap, Clock, ArrowLeft, Play, Pause, SkipBack, SkipForward, FastForward, Award, Timer, Activity } from 'lucide-react';
+import { authenticatedFetch, isLoggedIn } from '@/lib/clientAuth';
 
 interface BoardState {
   pieces: Piece[];
@@ -61,6 +63,7 @@ export default function MatchViewerPage() {
   const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1500);
+  const [canExport, setCanExport] = useState(false);
 
   const playbackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -92,6 +95,39 @@ export default function MatchViewerPage() {
       };
     }
   }, [isPlaying, currentMoveIndex, match, playbackSpeed]);
+
+  // Check if user can export (owns one of the participating agents)
+  useEffect(() => {
+    const checkExportPermission = async () => {
+      if (!match || !isLoggedIn()) {
+        setCanExport(false);
+        return;
+      }
+
+      try {
+        // Fetch user's agents to check ownership
+        const response = await authenticatedFetch('/api/dashboard/agents');
+        if (!response.ok) {
+          setCanExport(false);
+          return;
+        }
+
+        const data = await response.json();
+        const userAgentIds = new Set(
+          (data.agents || []).map((agent: { id: string }) => agent.id)
+        );
+
+        // Check if user owns white or black agent
+        const ownsParticipant = userAgentIds.has(match.whiteAgent.id) ||
+                                userAgentIds.has(match.blackAgent.id);
+        setCanExport(ownsParticipant);
+      } catch {
+        setCanExport(false);
+      }
+    };
+
+    checkExportPermission();
+  }, [match]);
 
   const fetchMatchData = async () => {
     try {
@@ -209,13 +245,18 @@ export default function MatchViewerPage() {
                 </p>
               </div>
             </div>
-            <Link
-              href="/dashboard"
-              className="bg-gray-700/50 backdrop-blur hover:bg-gray-600/50 text-white px-6 py-3 rounded-lg font-semibold transition-all shadow-lg flex items-center gap-2"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Dashboard
-            </Link>
+            <div className="flex items-center gap-3">
+              {canExport && (
+                <ExportButton matchId={matchId} />
+              )}
+              <Link
+                href="/dashboard"
+                className="bg-gray-700/50 backdrop-blur hover:bg-gray-600/50 text-white px-6 py-3 rounded-lg font-semibold transition-all shadow-lg flex items-center gap-2"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Dashboard
+              </Link>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

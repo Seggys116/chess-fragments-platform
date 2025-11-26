@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Navigation from '@/components/Navigation';
 import AnimatedBackground from '@/components/AnimatedBackground';
+import ExportButton from '@/components/ExportButton';
 import { Trophy, Zap, Clock, Target, Activity, TrendingUp, Shield, ChartBar, Eye, ArrowLeft, Sword, Timer, ChevronLeft, ChevronRight } from 'lucide-react';
 import { authenticatedFetch } from '@/lib/clientAuth';
 
@@ -604,6 +605,10 @@ export default function AgentAnalyticsPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
+                <ExportButton
+                  agentId={agentId}
+                  agentName={analytics.agent.name}
+                />
                 <select
                   value={matchesPageSize}
                   onChange={(e) => { setMatchesPageSize(Number(e.target.value)); setMatchesPage(1); }}

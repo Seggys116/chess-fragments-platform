@@ -124,6 +124,24 @@ model Ranking {
   @@map("rankings")
 }
 
+model EloHistory {
+  id             String   @id @default(uuid())
+  matchId        String   @map("match_id")
+  agentId        String   @map("agent_id")
+  opponentId     String   @map("opponent_id")
+  eloBefore      Int      @map("elo_before")
+  eloAfter       Int      @map("elo_after")
+  eloChange      Int      @map("elo_change")
+  opponentEloBefore Int   @map("opponent_elo_before")
+  result         String   // win, loss, draw
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([matchId, agentId])
+  @@index([agentId])
+  @@index([opponentId])
+  @@map("elo_history")
+}
+
 model UploadLog {
   id            String   @id @default(uuid())
   userId        String   @map("user_id")

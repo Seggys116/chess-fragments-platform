@@ -33,6 +33,8 @@ interface Agent {
   version: number;
   eloRating: number;
   avgMoveTimeMs: number | null;
+  eloChange: number | null;
+  eloBefore: number | null;
 }
 
 interface Match {
@@ -241,7 +243,15 @@ export default function MatchViewerPage() {
                 <div className="flex items-center gap-3 text-sm">
                   <span className="text-yellow-400 flex items-center gap-1">
                     <Zap className="w-4 h-4" />
-                    {match.whiteAgent.eloRating} ELO
+                    {match.whiteAgent.eloBefore ?? match.whiteAgent.eloRating} ELO
+                    {match.whiteAgent.eloChange !== null && (
+                      <span className={`ml-1 font-bold ${
+                        match.whiteAgent.eloChange > 0 ? 'text-green-400' :
+                        match.whiteAgent.eloChange < 0 ? 'text-red-400' : 'text-gray-400'
+                      }`}>
+                        ({match.whiteAgent.eloChange > 0 ? '+' : ''}{match.whiteAgent.eloChange})
+                      </span>
+                    )}
                   </span>
                   {match.whiteAgent.avgMoveTimeMs !== null && (
                     <span className="text-gray-400 flex items-center gap-1">
@@ -281,7 +291,15 @@ export default function MatchViewerPage() {
                 <div className="flex items-center gap-3 text-sm">
                   <span className="text-yellow-400 flex items-center gap-1">
                     <Zap className="w-4 h-4" />
-                    {match.blackAgent.eloRating} ELO
+                    {match.blackAgent.eloBefore ?? match.blackAgent.eloRating} ELO
+                    {match.blackAgent.eloChange !== null && (
+                      <span className={`ml-1 font-bold ${
+                        match.blackAgent.eloChange > 0 ? 'text-green-400' :
+                        match.blackAgent.eloChange < 0 ? 'text-red-400' : 'text-gray-400'
+                      }`}>
+                        ({match.blackAgent.eloChange > 0 ? '+' : ''}{match.blackAgent.eloChange})
+                      </span>
+                    )}
                   </span>
                   {match.blackAgent.avgMoveTimeMs !== null && (
                     <span className="text-gray-400 flex items-center gap-1">

@@ -17,12 +17,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'shared'))
 from itertools import cycle
 from chessmaker.chess.base import Board, Player
 from extension.board_utils import list_legal_moves_for, copy_piece_move
-from extension.board_rules import get_result
+from extension.board_rules import get_result, GAME_TIME_BUDGET
 from constants import get_default_agent_var
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 # Global timeout for agent moves - read from environment
 AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
+# Total game time limit (defaults to 300s from board_rules)
+TOTAL_GAME_TIME_LIMIT = GAME_TIME_BUDGET
 
 
 def execute_agent_with_timeout(agent_func, board, player, timeout_seconds, var=None):
@@ -172,14 +174,40 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
     white_ply = 1
     black_ply = 1
 
+    # Track total game time for 300s draw limit
+    game_start_time = time.time()
+
     while moves < max_moves:
         try:
+            # Check total game time limit (300s = draw)
+            elapsed_game_time = time.time() - game_start_time
+            if elapsed_game_time >= TOTAL_GAME_TIME_LIMIT:
+                print(f"Game exceeded {TOTAL_GAME_TIME_LIMIT}s time limit ({elapsed_game_time:.1f}s) - declaring draw")
+                return {
+                    'winner': 'draw',
+                    'moves': moves,
+                    'termination': 'stuck_timeout',
+                    'game_states': game_states
+                }
+
             player = next(turn_order)
             moves += 1
 
             # Debug: check available moves
             legal_moves = list_legal_moves_for(board, player)
             print(f"Move {moves}, {player.name} turn: {len(legal_moves)} legal moves available")
+
+            # Check for stalemate (no legal moves at start of turn)
+            if not legal_moves:
+                # No legal moves - this is stalemate, player loses in this variant
+                winner = "black" if player.name == "white" else "white"
+                print(f"{player.name} has no legal moves available - stalemate, {player.name} loses")
+                return {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': 'stalemate',
+                    'game_states': game_states
+                }
 
             # Get move from agent with timeout enforcement
             p_piece, p_move_opt = None, None

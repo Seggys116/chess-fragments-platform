@@ -72,10 +72,12 @@ interface Analytics {
   headToHead: Array<{
     opponentId: string;
     opponentName: string;
+    opponentElo: number;
     wins: number;
     losses: number;
     draws: number;
     total: number;
+    eloChange: number | null;
   }>;
   h2hTotal: number;
   totalMatches: number;
@@ -97,6 +99,8 @@ interface Match {
   termination: string | null;
   createdAt: string;
   completedAt: string | null;
+  eloChange: number | null;
+  eloBefore: number | null;
 }
 
 export default function AgentAnalyticsPage() {
@@ -509,6 +513,7 @@ export default function AgentAnalyticsPage() {
                       <th className="px-4 py-4 text-center text-sm font-semibold text-purple-400">Draws</th>
                       <th className="px-4 py-4 text-center text-sm font-semibold text-purple-400">Total</th>
                       <th className="px-4 py-4 text-center text-sm font-semibold text-purple-400">Win Rate</th>
+                      <th className="px-4 py-4 text-center text-sm font-semibold text-purple-400">ELO +/-</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-purple-500/10">
@@ -537,6 +542,21 @@ export default function AgentAnalyticsPage() {
                               ? ((record.wins / record.total) * 100).toFixed(1)
                               : 0}%
                           </span>
+                        </td>
+                        <td className="px-4 py-4 text-center">
+                          {record.eloChange !== null ? (
+                            <span className={`px-3 py-1 rounded-full text-sm font-bold border ${
+                              record.eloChange > 0
+                                ? 'bg-green-900/50 text-green-300 border-green-500/30'
+                                : record.eloChange < 0
+                                ? 'bg-red-900/50 text-red-300 border-red-500/30'
+                                : 'bg-gray-800/50 text-gray-300 border-gray-600/30'
+                            }`}>
+                              {record.eloChange > 0 ? '+' : ''}{record.eloChange}
+                            </span>
+                          ) : (
+                            <span className="text-gray-500 text-sm">-</span>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -654,12 +674,25 @@ export default function AgentAnalyticsPage() {
                           </div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-gray-400 text-sm">
-                          {new Date(match.createdAt).toLocaleDateString()}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {new Date(match.createdAt).toLocaleTimeString()}
+                      <div className="text-right flex items-center gap-4">
+                        {match.eloChange !== null && match.matchType === 'matchmaking' && (
+                          <div className={`px-3 py-1 rounded-lg font-bold text-sm border ${
+                            match.eloChange > 0
+                              ? 'bg-green-900/50 text-green-300 border-green-500/30'
+                              : match.eloChange < 0
+                              ? 'bg-red-900/50 text-red-300 border-red-500/30'
+                              : 'bg-gray-800/50 text-gray-300 border-gray-600/30'
+                          }`}>
+                            {match.eloChange > 0 ? '+' : ''}{match.eloChange} ELO
+                          </div>
+                        )}
+                        <div>
+                          <div className="text-gray-400 text-sm">
+                            {new Date(match.createdAt).toLocaleDateString()}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {new Date(match.createdAt).toLocaleTimeString()}
+                          </div>
                         </div>
                       </div>
                     </div>

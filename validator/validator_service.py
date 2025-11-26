@@ -95,10 +95,11 @@ def validate_agent_in_temp_env(code: str) -> tuple[bool, str | None, int]:
             for board_squares, player, test_name in test_cases:
                 print(f"[VALIDATOR] Testing {test_name}...")
                 players = [white, black]
+                turn_order = [white, black] if player == white else [black, white]
                 board = Board(
                     squares=board_squares,
                     players=players,
-                    turn_iterator=cycle(players),
+                    turn_iterator=cycle(turn_order),
                 )
 
                 try:

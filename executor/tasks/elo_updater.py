@@ -169,6 +169,42 @@ def update_match_ratings(match_id: str):
                 match['black_agent_id']
             ))
 
+        # Store ELO history for both agents
+        white_result = 'win' if white_score == 1.0 else ('loss' if white_score == 0.0 else 'draw')
+        black_result = 'win' if black_score == 1.0 else ('loss' if black_score == 0.0 else 'draw')
+
+        # Insert white agent's ELO history
+        cur.execute("""
+            INSERT INTO elo_history (id, match_id, agent_id, opponent_id, elo_before, elo_after, elo_change, opponent_elo_before, result, created_at)
+            VALUES (gen_random_uuid()::text, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (match_id, agent_id) DO NOTHING
+        """, (
+            match_id,
+            match['white_agent_id'],
+            match['black_agent_id'],
+            match['white_elo'],
+            match['white_elo'] + white_change,
+            white_change,
+            match['black_elo'],
+            white_result
+        ))
+
+        # Insert black agent's ELO history
+        cur.execute("""
+            INSERT INTO elo_history (id, match_id, agent_id, opponent_id, elo_before, elo_after, elo_change, opponent_elo_before, result, created_at)
+            VALUES (gen_random_uuid()::text, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (match_id, agent_id) DO NOTHING
+        """, (
+            match_id,
+            match['black_agent_id'],
+            match['white_agent_id'],
+            match['black_elo'],
+            match['black_elo'] + black_change,
+            black_change,
+            match['white_elo'],
+            black_result
+        ))
+
         conn.commit()
         print(f"Updated ratings for match {match_id}: White {white_change:+d}, Black {black_change:+d}")
 

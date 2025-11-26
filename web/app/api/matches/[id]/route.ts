@@ -58,6 +58,21 @@ export async function GET(
       ? Math.round(blackMoves.reduce((sum, m) => sum + (m.moveTimeMs || 0), 0) / blackMoves.length)
       : null;
 
+    // Fetch ELO history for this match (if it exists)
+    const eloHistory = await prisma.$queryRaw<Array<{
+      agent_id: string;
+      elo_before: number;
+      elo_after: number;
+      elo_change: number;
+    }>>`
+      SELECT agent_id, elo_before, elo_after, elo_change
+      FROM elo_history
+      WHERE match_id = ${id}
+    `;
+
+    const whiteEloHistory = eloHistory.find(h => h.agent_id === match.whiteAgent.id);
+    const blackEloHistory = eloHistory.find(h => h.agent_id === match.blackAgent.id);
+
     return NextResponse.json({
       success: true,
       match: {
@@ -76,6 +91,8 @@ export async function GET(
           version: match.whiteAgent.version,
           eloRating: match.whiteAgent.ranking?.eloRating || 1500,
           avgMoveTimeMs: whiteAvgTime,
+          eloChange: whiteEloHistory ? whiteEloHistory.elo_change : null,
+          eloBefore: whiteEloHistory ? whiteEloHistory.elo_before : null,
         },
         blackAgent: {
           id: match.blackAgent.id,
@@ -83,6 +100,8 @@ export async function GET(
           version: match.blackAgent.version,
           eloRating: match.blackAgent.ranking?.eloRating || 1500,
           avgMoveTimeMs: blackAvgTime,
+          eloChange: blackEloHistory ? blackEloHistory.elo_change : null,
+          eloBefore: blackEloHistory ? blackEloHistory.elo_before : null,
         },
         gameStates: match.gameStates.map(state => ({
           moveNumber: state.moveNumber,

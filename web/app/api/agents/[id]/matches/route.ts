@@ -98,6 +98,24 @@ export async function GET(
       },
     });
 
+    // Fetch ELO history for all these matches
+    const matchIds = matches.map(m => m.id);
+    const eloHistoryResult = await prisma.$queryRaw<Array<{
+      match_id: string;
+      elo_change: number;
+      elo_before: number;
+    }>>`
+      SELECT match_id, elo_change, elo_before
+      FROM elo_history
+      WHERE match_id = ANY(${matchIds}::text[])
+        AND agent_id = ${id}
+    `;
+
+    // Create a map for quick lookup
+    const eloHistoryMap = new Map<string, { eloChange: number; eloBefore: number }>(
+      eloHistoryResult.map(h => [h.match_id, { eloChange: h.elo_change, eloBefore: h.elo_before }])
+    );
+
     // Format matches
     const formattedMatches = matches.map(match => {
       const isWhite = match.whiteAgentId === id;
@@ -118,6 +136,8 @@ export async function GET(
         }
       }
 
+      const eloHistory = eloHistoryMap.get(match.id);
+
       return {
         id: match.id,
         matchType: match.matchType,
@@ -135,6 +155,8 @@ export async function GET(
         winner: match.winner,
         createdAt: match.createdAt,
         completedAt: match.completedAt,
+        eloChange: eloHistory?.eloChange ?? null,
+        eloBefore: eloHistory?.eloBefore ?? null,
       };
     });
 

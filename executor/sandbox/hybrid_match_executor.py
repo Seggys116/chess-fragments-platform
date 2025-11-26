@@ -10,6 +10,7 @@ import sys
 import os
 import types
 import random
+import time
 from pathlib import Path
 from itertools import cycle
 
@@ -18,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'shared'))
 
 from chessmaker.chess.base import Board, Player
 from extension.board_utils import copy_piece_move, list_legal_moves_for
-from extension.board_rules import get_result
+from extension.board_rules import get_result, GAME_TIME_BUDGET
 from samples import white, black
 from constants import get_default_agent_var
 from sandbox.hybrid_executor import AgentDisconnectedError, LocalAgentBridge, get_agent_move, clear_game_state, add_move_to_history, init_game_state
@@ -28,6 +29,8 @@ AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
 # Add buffer for network/system overhead when checking timeouts
 # 1.0s buffer accounts for: network latency, board reconstruction, message serialization
 TIMEOUT_CHECK_BUFFER = 1.0
+# Total game time limit (defaults to 300s from board_rules)
+TOTAL_GAME_TIME_LIMIT = GAME_TIME_BUDGET
 
 
 def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_name,
@@ -137,8 +140,23 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
     white_ply = 1
     black_ply = 1
 
+    # Track total game time for 300s draw limit
+    game_start_time = time.time()
+
     while moves < max_moves:
         try:
+            # Check total game time limit (300s = draw)
+            elapsed_game_time = time.time() - game_start_time
+            if elapsed_game_time >= TOTAL_GAME_TIME_LIMIT:
+                print(f"Game exceeded {TOTAL_GAME_TIME_LIMIT}s time limit ({elapsed_game_time:.1f}s) - declaring draw")
+                result = {
+                    'winner': 'draw',
+                    'moves': moves,
+                    'termination': 'time_limit',
+                    'game_states': game_states
+                }
+                break
+
             player = next(turn_order)
             moves += 1
 
@@ -147,13 +165,13 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
             print(f"Move {moves}, {player.name} turn: {len(legal_moves)} legal moves available")
 
             if not legal_moves:
-                # No legal moves - player loses
+                # No legal moves - this is stalemate, player loses in this variant
                 winner = "black" if player.name == "white" else "white"
-                print(f"{player.name} has no legal moves available")
+                print(f"{player.name} has no legal moves available - stalemate, {player.name} loses")
                 result = {
                     'winner': winner,
                     'moves': moves,
-                    'termination': 'no_moves',
+                    'termination': 'stalemate',
                     'game_states': game_states
                 }
                 break

@@ -187,10 +187,12 @@ export async function GET(
         const headToHeadResult = await prisma.$queryRaw<Array<{
             opponent_id: string;
             opponent_name: string;
+            opponent_elo: number;
             wins: bigint;
             losses: bigint;
             draws: bigint;
             total: bigint;
+            elo_change: bigint | null;
         }>>`
       WITH opponent_matches AS (
         SELECT
@@ -203,7 +205,8 @@ export async function GET(
           CASE
             WHEN m.white_agent_id = ${id} THEN a2.name || ' v' || a2.version
             ELSE a1.name || ' v' || a1.version
-          END as opponent_name
+          END as opponent_name,
+          m.id as match_id
         FROM matches m
         INNER JOIN agents a1 ON m.white_agent_id = a1.id
         INNER JOIN agents a2 ON m.black_agent_id = a2.id
@@ -211,14 +214,18 @@ export async function GET(
           AND m.status = 'completed'
       )
       SELECT
-        opponent_id,
-        MAX(opponent_name) as opponent_name,
-        COUNT(*) FILTER (WHERE result = 'win') as wins,
-        COUNT(*) FILTER (WHERE result = 'loss') as losses,
-        COUNT(*) FILTER (WHERE result = 'draw') as draws,
-        COUNT(*) as total
-      FROM opponent_matches
-      GROUP BY opponent_id
+        om.opponent_id,
+        MAX(om.opponent_name) as opponent_name,
+        COALESCE(r.elo_rating, 1500) as opponent_elo,
+        COUNT(*) FILTER (WHERE om.result = 'win') as wins,
+        COUNT(*) FILTER (WHERE om.result = 'loss') as losses,
+        COUNT(*) FILTER (WHERE om.result = 'draw') as draws,
+        COUNT(*) as total,
+        SUM(eh.elo_change) as elo_change
+      FROM opponent_matches om
+      LEFT JOIN rankings r ON om.opponent_id = r.agent_id
+      LEFT JOIN elo_history eh ON eh.match_id = om.match_id AND eh.agent_id = ${id}
+      GROUP BY om.opponent_id, r.elo_rating
       ORDER BY total DESC
       LIMIT ${h2hLimit}
       OFFSET ${h2hOffset}
@@ -227,10 +234,12 @@ export async function GET(
         const headToHead = headToHeadResult.map(row => ({
             opponentId: row.opponent_id,
             opponentName: row.opponent_name,
+            opponentElo: row.opponent_elo || 1500,
             wins: Number(row.wins),
             losses: Number(row.losses),
             draws: Number(row.draws),
             total: Number(row.total),
+            eloChange: row.elo_change !== null ? Number(row.elo_change) : null,
         }));
 
         const gameStatsResult = await prisma.$queryRaw<Array<{

@@ -12,6 +12,8 @@ from typing import Optional, Dict, Any, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'shared'))
 from constants import get_default_agent_var
+from extension.board_utils import list_legal_moves_for
+from samples import white as white_player_global, black as black_player_global
 
 REDIS_URL = 'redis://redis:6379'
 # Move timeout - read from environment
@@ -205,7 +207,7 @@ def get_agent_move(agent_code: Optional[str], agent_id: str, execution_mode: str
                 print(f"[AGENT_RESPONSE] agent={agent_id} piece=({piece_pos.get('x')},{piece_pos.get('y')}) move=({move_pos.get('x')},{move_pos.get('y')}) type={move_data.get('pieceType')}", flush=True)
 
                 # Reconstruct piece and move from move_data
-                piece, move = reconstruct_move_from_data(board, move_data, game_id)
+                piece, move = reconstruct_move_from_data(board, move_data, game_id, player_name)
 
                 # Move validation successful - history will be updated in match executor after move is applied
 
@@ -303,8 +305,9 @@ def reconstruct_board_from_history(game_id: str):
     """
     Reconstruct a board from the initial position + move history.
     This creates a board with the SAME ChessMaker internal state as the client.
+    Uses the same global Player objects as the server board for consistency.
     """
-    from chessmaker.chess.base import Board as ChessBoard, Player, Square
+    from chessmaker.chess.base import Board as ChessBoard, Square
     from chessmaker.chess.pieces import King, Bishop, Knight, Queen
     from extension.piece_right import Right as RightPiece
     from extension.piece_pawn import Pawn_Q
@@ -329,9 +332,9 @@ def reconstruct_board_from_history(game_id: str):
         'Pawn_Q': Pawn_Q,
     }
 
-    # Create players
-    white_player = Player("white")
-    black_player = Player("black")
+    # Use the same global player objects as the server board for consistency
+    white_player = white_player_global
+    black_player = black_player_global
 
     # Create empty board
     width = initial_board['width']
@@ -351,7 +354,7 @@ def reconstruct_board_from_history(game_id: str):
             new_piece = piece_classes[piece_type](player_obj)
             squares[y][x] = Square(new_piece)
 
-    # Create board
+    # Create board with same players as server board
     players = [white_player, black_player]
     reconstructed_board = ChessBoard(
         squares=squares,
@@ -387,10 +390,16 @@ def reconstruct_board_from_history(game_id: str):
     return reconstructed_board
 
 
-def reconstruct_move_from_data(board, move_data: Dict, game_id: str):
+def reconstruct_move_from_data(board, move_data: Dict, game_id: str, current_player: str):
     """
     Reconstruct piece and move objects from move data.
     Validates against a board reconstructed from move history (same as client).
+
+    Args:
+        board: Server board object
+        move_data: Move data from local agent
+        game_id: Game/match ID
+        current_player: Name of player whose turn it is ('white' or 'black')
     """
     try:
         piece_pos = move_data.get('piecePosition', {})
@@ -423,22 +432,34 @@ def reconstruct_move_from_data(board, move_data: Dict, game_id: str):
             print(f"[VALIDATION_ERROR] No piece at ({piece_x},{piece_y}) on client board", flush=True)
             return (None, None)
 
-        # Get legal moves from CLIENT board
-        legal_moves = client_piece.get_move_options()
+        # Validate piece belongs to current player
+        if client_piece.player.name != current_player:
+            print(f"[VALIDATION_ERROR] Piece at ({piece_x},{piece_y}) belongs to {client_piece.player.name}, not {current_player}", flush=True)
+            return (None, None)
 
-        # Check if the agent's move is in the legal moves
-        for move in legal_moves:
-            if move.position.x == move_x and move.position.y == move_y:
+        # Get the player object for the current player
+        current_player_obj = white_player_global if current_player == 'white' else black_player_global
+
+        # Get ALL legal moves for this player using the same method as match executor
+        # This ensures consistency between what the server considers legal and what we validate
+        all_legal_moves = list_legal_moves_for(client_board, current_player_obj)
+
+        # Find the move that matches the piece position and target position
+        for legal_piece, legal_move in all_legal_moves:
+            if (legal_piece.position.x == piece_x and legal_piece.position.y == piece_y and
+                legal_move.position.x == move_x and legal_move.position.y == move_y):
                 # Move is valid on client board!
                 # Now get the REAL piece from the server board to return
                 server_squares = getattr(board, '_squares', [])
                 server_piece = server_squares[piece_y][piece_x].piece
 
                 print(f"[VALIDATION_OK] {type(client_piece).__name__} ({piece_x},{piece_y})->({move_x},{move_y})", flush=True)
-                return (server_piece, move)
+                return (server_piece, legal_move)
 
-        # Move not legal even on client board
-        legal_moves_str = ", ".join([f"({m.position.x},{m.position.y})" for m in legal_moves])
+        # Move not legal - build debug info
+        piece_moves = [(p.position.x, p.position.y, m.position.x, m.position.y)
+                       for p, m in all_legal_moves if p.position.x == piece_x and p.position.y == piece_y]
+        legal_moves_str = ", ".join([f"->({mx},{my})" for _, _, mx, my in piece_moves])
         print(f"[VALIDATION_FAIL] game={game_id} {type(client_piece).__name__} ({piece_x},{piece_y})->({move_x},{move_y}) Legal=[{legal_moves_str}]", flush=True)
         return (None, None)
 

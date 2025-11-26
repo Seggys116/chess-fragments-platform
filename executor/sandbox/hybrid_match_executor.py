@@ -21,7 +21,7 @@ from extension.board_utils import copy_piece_move, list_legal_moves_for
 from extension.board_rules import get_result
 from samples import white, black
 from constants import get_default_agent_var
-from sandbox.hybrid_executor import AgentDisconnectedError, LocalAgentBridge, get_agent_move, clear_game_state, add_move_to_history
+from sandbox.hybrid_executor import AgentDisconnectedError, LocalAgentBridge, get_agent_move, clear_game_state, add_move_to_history, init_game_state
 
 # Agent timeout in seconds - read from environment
 AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
@@ -123,6 +123,10 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
         players=players,
         turn_iterator=cycle(players),
     )
+
+    # Initialize game state cache with the initial board BEFORE any moves
+    # This ensures local agents receive correct initial state for board reconstruction
+    init_game_state(match_id, board)
 
     turn_order = cycle(players)
     moves = 0
@@ -251,10 +255,43 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
             if timed_out:
                 winner = "black" if player.name == "white" else "white"
                 print(f"{player.name} TIMEOUT - forfeiting game to {winner}")
+
+                # Record the timeout move in game states for analytics
+                board_state = serialize_board(board)
+                game_states.append({
+                    'move_number': moves,
+                    'board_state': board_state,
+                    'move_time_ms': int(move_time_ms),
+                    'notation': f"TIMEOUT({player.name})",
+                })
+
                 result = {
                     'winner': winner,
                     'moves': moves,
                     'termination': 'timeout',
+                    'game_states': game_states
+                }
+                break
+
+            # Validate piece belongs to current player (prevent moving opponent's pieces)
+            if p_piece and hasattr(p_piece, 'player') and p_piece.player.name != player.name:
+                winner = "black" if player.name == "white" else "white"
+                termination = "white_invalid" if player.name == "white" else "black_invalid"
+                print(f"{player.name} tried to move opponent's piece ({p_piece.player.name}) - forfeiting game to {winner}")
+
+                # Record the invalid move in game states for analytics
+                board_state = serialize_board(board)
+                game_states.append({
+                    'move_number': moves,
+                    'board_state': board_state,
+                    'move_time_ms': int(move_time_ms),
+                    'notation': f"INVALID({player.name})",
+                })
+
+                result = {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': termination,
                     'game_states': game_states
                 }
                 break
@@ -264,6 +301,16 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                 winner = "black" if player.name == "white" else "white"
                 termination = "white_invalid" if player.name == "white" else "black_invalid"
                 print(f"{player.name} returned invalid move (None) - forfeiting game to {winner}")
+
+                # Record the invalid move in game states for analytics
+                board_state = serialize_board(board)
+                game_states.append({
+                    'move_number': moves,
+                    'board_state': board_state,
+                    'move_time_ms': int(move_time_ms),
+                    'notation': f"INVALID({player.name})",
+                })
+
                 result = {
                     'winner': winner,
                     'moves': moves,
@@ -280,6 +327,16 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                 winner = "black" if player.name == "white" else "white"
                 termination = "white_invalid" if player.name == "white" else "black_invalid"
                 print(f"{player.name} returned invalid move (failed validation) - forfeiting game to {winner}")
+
+                # Record the invalid move in game states for analytics
+                board_state_invalid = serialize_board(board)
+                game_states.append({
+                    'move_number': moves,
+                    'board_state': board_state_invalid,
+                    'move_time_ms': int(move_time_ms),
+                    'notation': f"INVALID({player.name})",
+                })
+
                 result = {
                     'winner': winner,
                     'moves': moves,

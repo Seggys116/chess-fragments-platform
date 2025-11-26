@@ -64,6 +64,7 @@ export default function DashboardPage() {
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
+  const [deleteConfirmStep, setDeleteConfirmStep] = useState<string | null>(null); // agentId when in "really sure?" step
   const router = useRouter();
 
   useEffect(() => {
@@ -430,7 +431,7 @@ export default function DashboardPage() {
                         <Power className="w-4 h-4" />
                         {agent.active ? 'Deactivate' : 'Activate'}
                       </button>
-                      <AlertDialog>
+                      <AlertDialog onOpenChange={(open) => { if (!open) setDeleteConfirmStep(null); }}>
                         <AlertDialogTrigger asChild>
                           <button
                             className="bg-red-600/80 backdrop-blur hover:bg-red-700/80 text-white px-4 py-2 rounded-lg font-semibold transition-all text-sm flex items-center gap-2 shadow-lg shadow-red-500/20"
@@ -441,19 +442,42 @@ export default function DashboardPage() {
                         </AlertDialogTrigger>
                         <AlertDialogContent className="bg-gray-900/95 backdrop-blur border border-purple-500/30 shadow-2xl shadow-purple-500/20">
                           <AlertDialogHeader>
-                            <AlertDialogTitle className="text-white text-2xl">Delete Agent</AlertDialogTitle>
+                            <AlertDialogTitle className="text-white text-2xl">
+                              {deleteConfirmStep === agent.id ? 'Are you REALLY sure?' : 'Delete Agent'}
+                            </AlertDialogTitle>
                             <AlertDialogDescription className="text-gray-300 text-base">
-                              Are you sure you want to delete {agent.name} v{agent.version}? This action cannot be undone. All associated rankings and match history will be permanently removed.
+                              {deleteConfirmStep === agent.id ? (
+                                <span className="text-red-300">
+                                  This is your final warning. Deleting <strong>{agent.name} v{agent.version}</strong> is permanent and cannot be undone. All rankings, match history, and analytics will be lost forever.
+                                </span>
+                              ) : (
+                                <>Are you sure you want to delete {agent.name} v{agent.version}? This action cannot be undone. All associated rankings and match history will be permanently removed.</>
+                              )}
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
                             <AlertDialogCancel className="bg-gray-700/80 backdrop-blur hover:bg-gray-600/80 text-white border-gray-600/50 shadow-lg">Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => deleteAgent(agent.id)}
-                              className="bg-gradient-to-r from-red-600/80 to-rose-600/80 backdrop-blur hover:from-red-500/80 hover:to-rose-500/80 text-white shadow-lg shadow-red-500/20 border-0"
-                            >
-                              Delete
-                            </AlertDialogAction>
+                            {deleteConfirmStep === agent.id ? (
+                              <AlertDialogAction
+                                onClick={() => {
+                                  deleteAgent(agent.id);
+                                  setDeleteConfirmStep(null);
+                                }}
+                                className="bg-gradient-to-r from-red-700/90 to-rose-700/90 backdrop-blur hover:from-red-600/90 hover:to-rose-600/90 text-white shadow-lg shadow-red-500/30 border-0 font-bold"
+                              >
+                                Yes, Delete Forever
+                              </AlertDialogAction>
+                            ) : (
+                              <button
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setDeleteConfirmStep(agent.id);
+                                }}
+                                className="bg-gradient-to-r from-red-600/80 to-rose-600/80 backdrop-blur hover:from-red-500/80 hover:to-rose-500/80 text-white shadow-lg shadow-red-500/20 border-0 px-4 py-2 rounded-md font-medium"
+                              >
+                                Delete
+                              </button>
+                            )}
                           </AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>

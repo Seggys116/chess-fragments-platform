@@ -214,10 +214,40 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
             if timed_out:
                 winner = "black" if player.name == "white" else "white"
                 print(f"{player.name} TIMEOUT - forfeiting game to {winner}")
+
+                # Record the timeout move in game states for analytics
+                game_states.append({
+                    'move_number': moves,
+                    'board_state': serialize_board(board),
+                    'move_time_ms': int(AGENT_TIMEOUT_SECONDS * 1000),
+                    'notation': f"TIMEOUT({player.name})",
+                })
+
                 return {
                     'winner': winner,
                     'moves': moves,
                     'termination': 'timeout',
+                    'game_states': game_states
+                }
+
+            # Validate piece belongs to current player (prevent moving opponent's pieces)
+            if p_piece and hasattr(p_piece, 'player') and p_piece.player.name != player.name:
+                winner = "black" if player.name == "white" else "white"
+                termination = "white_invalid" if player.name == "white" else "black_invalid"
+                print(f"{player.name} tried to move opponent's piece ({p_piece.player.name}) - forfeiting game to {winner}")
+
+                # Record the invalid move in game states for analytics
+                game_states.append({
+                    'move_number': moves,
+                    'board_state': serialize_board(board),
+                    'move_time_ms': move_time_ms if move_time_ms else 0,
+                    'notation': f"INVALID({player.name})",
+                })
+
+                return {
+                    'winner': winner,
+                    'moves': moves,
+                    'termination': termination,
                     'game_states': game_states
                 }
 
@@ -226,6 +256,15 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
                 winner = "black" if player.name == "white" else "white"
                 termination = "white_invalid" if player.name == "white" else "black_invalid"
                 print(f"{player.name} returned invalid move (None) - forfeiting game to {winner}")
+
+                # Record the invalid move in game states for analytics
+                game_states.append({
+                    'move_number': moves,
+                    'board_state': serialize_board(board),
+                    'move_time_ms': move_time_ms if move_time_ms else 0,
+                    'notation': f"INVALID({player.name})",
+                })
+
                 return {
                     'winner': winner,
                     'moves': moves,
@@ -240,6 +279,15 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
                 winner = "black" if player.name == "white" else "white"
                 termination = "white_invalid" if player.name == "white" else "black_invalid"
                 print(f"{player.name} returned invalid move (failed validation) - forfeiting game to {winner}")
+
+                # Record the invalid move in game states for analytics
+                game_states.append({
+                    'move_number': moves,
+                    'board_state': serialize_board(board),
+                    'move_time_ms': move_time_ms if move_time_ms else 0,
+                    'notation': f"INVALID({player.name})",
+                })
+
                 return {
                     'winner': winner,
                     'moves': moves,

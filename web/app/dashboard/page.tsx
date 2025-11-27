@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, Trophy, Zap, Clock, Target, Activity, TrendingUp, TrendingDown, Shield, ChartBar, Eye, Code, Power, Upload, Download, Edit2 } from 'lucide-react';
+import { Trash2, Trophy, Zap, Clock, Target, Activity, TrendingUp, TrendingDown, Shield, ChartBar, Eye, Code, Power, Upload, Download, Edit2, AlertTriangle } from 'lucide-react';
 import { authenticatedFetch } from '@/lib/api-client';
 import Navigation from '@/components/Navigation';
 import AnimatedBackground from '@/components/AnimatedBackground';
@@ -65,6 +65,9 @@ export default function DashboardPage() {
   const [editingName, setEditingName] = useState('');
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
   const [deleteConfirmStep, setDeleteConfirmStep] = useState<string | null>(null); // agentId when in "really sure?" step
+  const [deactivatingOlderVersions, setDeactivatingOlderVersions] = useState(false);
+  const [autoDeactivatedCount, setAutoDeactivatedCount] = useState(0);
+  const [hasCheckedExcessVersions, setHasCheckedExcessVersions] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -238,6 +241,62 @@ export default function DashboardPage() {
     });
   };
 
+  // Deactivate all older versions of agents (keep only the latest active version per name)
+  const deactivateOlderVersions = async () => {
+    setDeactivatingOlderVersions(true);
+    try {
+      const response = await authenticatedFetch('/api/dashboard/agents/deactivate-older', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to deactivate older versions');
+      }
+
+      await fetchDashboardData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setDeactivatingOlderVersions(false);
+    }
+  };
+
+  // Auto-deactivate excess versions (more than 3 active of same agent)
+  const autoDeactivateExcessVersions = async (agentGroups: Record<string, Agent[]>) => {
+    const agentsToDeactivate: string[] = [];
+
+    for (const [name, versions] of Object.entries(agentGroups)) {
+      const activeVersions = versions.filter(a => a.active).sort((a, b) => b.version - a.version);
+      if (activeVersions.length > 3) {
+        // Keep top 3, deactivate the rest
+        const excessVersions = activeVersions.slice(3);
+        agentsToDeactivate.push(...excessVersions.map(a => a.id));
+      }
+    }
+
+    if (agentsToDeactivate.length > 0) {
+      try {
+        const response = await authenticatedFetch('/api/dashboard/agents/deactivate-bulk', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ agentIds: agentsToDeactivate }),
+        });
+
+        if (response.ok) {
+          setAutoDeactivatedCount(agentsToDeactivate.length);
+          await fetchDashboardData();
+        }
+      } catch (err) {
+        console.error('Failed to auto-deactivate excess versions:', err);
+      }
+    }
+  };
+
   // Group agents by name, sorted by version descending
   const groupedAgents = agents.reduce((acc, agent) => {
     if (!acc[agent.name]) {
@@ -251,6 +310,28 @@ export default function DashboardPage() {
   Object.keys(groupedAgents).forEach(name => {
     groupedAgents[name].sort((a, b) => b.version - a.version);
   });
+
+  // Check for agents with multiple active versions
+  const agentsWithMultipleActiveVersions = Object.entries(groupedAgents).filter(([name, versions]) => {
+    const activeCount = versions.filter(a => a.active).length;
+    return activeCount > 1;
+  });
+
+  const hasMultipleActiveVersions = agentsWithMultipleActiveVersions.length > 0;
+
+  // Check if any agent group has more than 3 active versions (for auto-deactivation)
+  const hasExcessActiveVersions = Object.entries(groupedAgents).some(([name, versions]) => {
+    const activeCount = versions.filter(a => a.active).length;
+    return activeCount > 3;
+  });
+
+  // Auto-deactivate excess versions on load (only once)
+  useEffect(() => {
+    if (!loading && hasExcessActiveVersions && !hasCheckedExcessVersions) {
+      setHasCheckedExcessVersions(true);
+      autoDeactivateExcessVersions(groupedAgents);
+    }
+  }, [loading, hasExcessActiveVersions, hasCheckedExcessVersions]);
 
   if (loading) {
     return (
@@ -283,6 +364,69 @@ export default function DashboardPage() {
         {error && (
           <div className="mb-6 bg-red-900/50 backdrop-blur border border-red-600/50 rounded-lg p-4">
             <p className="text-red-200">{error}</p>
+          </div>
+        )}
+
+        {/* Auto-deactivation notification */}
+        {autoDeactivatedCount > 0 && (
+          <div className="mb-6 bg-blue-900/50 backdrop-blur border border-blue-500/50 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-blue-200">
+                  <span className="font-semibold">{autoDeactivatedCount} older agent version{autoDeactivatedCount > 1 ? 's were' : ' was'} automatically deactivated.</span>
+                  {' '}Only 3 versions of the same agent can be active at a time.
+                </p>
+              </div>
+              <button
+                onClick={() => setAutoDeactivatedCount(0)}
+                className="text-blue-400 hover:text-blue-300 ml-auto"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Warning for multiple active versions */}
+        {hasMultipleActiveVersions && (
+          <div className="mb-6 bg-amber-900/50 backdrop-blur border border-amber-500/50 rounded-lg p-4">
+            <div className="flex flex-col sm:flex-row items-start gap-4">
+              <div className="flex items-start gap-3 flex-1">
+                <AlertTriangle className="w-6 h-6 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-amber-200 font-semibold mb-1">Multiple Versions Active</p>
+                  <p className="text-amber-300/80 text-sm">
+                    Running multiple versions of the same agent is useful for comparing performance.
+                    However, please be mindful that each active agent consumes match availability for everyone.
+                    Consider deactivating older versions when you are done testing.
+                  </p>
+                  <p className="text-amber-400/70 text-xs mt-2">
+                    Affected agents: {agentsWithMultipleActiveVersions.map(([name, versions]) => {
+                      const activeCount = (versions as Agent[]).filter(a => a.active).length;
+                      return `${name} (${activeCount} active)`;
+                    }).join(', ')}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={deactivateOlderVersions}
+                disabled={deactivatingOlderVersions}
+                className="bg-amber-600/80 hover:bg-amber-500/80 disabled:bg-amber-800/50 text-white px-4 py-2 rounded-lg font-semibold transition-all text-sm whitespace-nowrap flex items-center gap-2 shadow-lg shadow-amber-500/20"
+              >
+                {deactivatingOlderVersions ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Deactivating...
+                  </>
+                ) : (
+                  <>
+                    <Power className="w-4 h-4" />
+                    Keep Only Latest Versions
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         )}
 

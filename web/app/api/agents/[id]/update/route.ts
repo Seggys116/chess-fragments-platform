@@ -34,7 +34,7 @@ function validateAgentCode(code: string): { valid: boolean; error?: string } {
     return { valid: false, error: 'Missing required "def agent(board, player, var):" function' };
   }
 
-  const forbiddenImports = ['os', 'subprocess', 'socket', 'urllib', 'requests', 'sys', 'eval', 'exec'];
+  const forbiddenImports = ['os', 'subprocess', 'socket', 'urllib', 'requests', 'sys', 'eval', 'exec', 'multiprocessing'];
   for (const forbidden of forbiddenImports) {
     if (code.includes(`import ${forbidden}`) || code.includes(`from ${forbidden}`)) {
       return { valid: false, error: `Forbidden import: ${forbidden}` };

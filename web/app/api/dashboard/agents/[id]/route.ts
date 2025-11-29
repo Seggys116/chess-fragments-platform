@@ -3,6 +3,12 @@ import { prisma } from '@/lib/db';
 import { getUserFromRequest } from '@/lib/auth';
 import { userRateLimit } from '@/lib/security/rateLimiter';
 
+function hasMultiprocessingImport(code: string | null | undefined): boolean {
+  if (!code) return false;
+
+  return /\bimport\s+multiprocessing\b/.test(code) || /\bfrom\s+multiprocessing\b/.test(code);
+}
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -42,6 +48,13 @@ export async function PATCH(
     const body = await request.json();
     const { active, name } = body;
 
+    if (active !== undefined && typeof active !== 'boolean') {
+      return NextResponse.json(
+        { error: 'Active flag must be a boolean' },
+        { status: 400 }
+      );
+    }
+
     if (name !== undefined) {
       if (typeof name !== 'string') {
         return NextResponse.json(
@@ -73,6 +86,13 @@ export async function PATCH(
     }
     if (name !== undefined) {
       updateData.name = name.trim();
+    }
+
+    if (active === true && hasMultiprocessingImport(agent.codeText)) {
+      return NextResponse.json(
+        { error: 'Agents using multiprocessing are not allowed. Remove multiprocessing before activating.' },
+        { status: 400 }
+      );
     }
 
     const updatedAgent = await prisma.agent.update({

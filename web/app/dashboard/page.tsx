@@ -68,7 +68,13 @@ export default function DashboardPage() {
   const [deactivatingOlderVersions, setDeactivatingOlderVersions] = useState(false);
   const [autoDeactivatedCount, setAutoDeactivatedCount] = useState(0);
   const [hasCheckedExcessVersions, setHasCheckedExcessVersions] = useState(false);
+  const [concurrencyWarning, setConcurrencyWarning] = useState('');
   const router = useRouter();
+
+  const isConcurrencyError = (message: string | undefined) => {
+    if (!message) return false;
+    return /multiprocess|multithread/i.test(message);
+  };
 
   useEffect(() => {
     const accessCode = localStorage.getItem('fragmentarena_code');
@@ -115,12 +121,28 @@ export default function DashboardPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update agent');
+        let errorMessage = 'Failed to update agent';
+        try {
+          const data = await response.json();
+          errorMessage = data.error || errorMessage;
+          if (isConcurrencyError(errorMessage)) {
+            setConcurrencyWarning('You are not allowed to multithread your agent as threads are used to allow for multiple games to be played at once not to be used on one agent.');
+          }
+        } catch {
+          // Ignore JSON parse errors
+        }
+
+        throw new Error(errorMessage);
       }
 
+      setConcurrencyWarning('');
       await fetchDashboardData();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'An error occurred');
+      const message = err instanceof Error ? err.message : 'An error occurred';
+      if (isConcurrencyError(message)) {
+        setConcurrencyWarning('You are not allowed to multithread your agent as threads are used to allow for multiple games to be played at once not to be used on one agent.');
+      }
+      alert(message);
     }
   };
 
@@ -364,6 +386,15 @@ export default function DashboardPage() {
         {error && (
           <div className="mb-6 bg-red-900/50 backdrop-blur border border-red-600/50 rounded-lg p-4">
             <p className="text-red-200">{error}</p>
+          </div>
+        )}
+
+        {concurrencyWarning && (
+          <div className="mb-6 bg-amber-900/40 backdrop-blur border border-amber-500/40 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-300 flex-shrink-0 mt-0.5" />
+              <p className="text-amber-100 text-sm">{concurrencyWarning}</p>
+            </div>
           </div>
         )}
 

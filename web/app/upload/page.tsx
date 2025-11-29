@@ -32,6 +32,7 @@ export default function UploadPage() {
     const [queueId, setQueueId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const [concurrencyWarning, setConcurrencyWarning] = useState('');
 
     useEffect(() => {
         const stored = localStorage.getItem('fragmentarena_code');
@@ -173,6 +174,11 @@ export default function UploadPage() {
         }
     };
 
+    const isConcurrencyError = (message: string | undefined) => {
+        if (!message) return false;
+        return /multiprocess|multithread/i.test(message);
+    };
+
     const handleUpload = async () => {
         if (!agentName || !code) {
             setError('Please provide both agent name and code');
@@ -181,6 +187,7 @@ export default function UploadPage() {
 
         setLoading(true);
         setError('');
+        setConcurrencyWarning('');
         setSuccess('');
         setValidationStatus(null);
         setUploadProgress(0);
@@ -204,6 +211,9 @@ export default function UploadPage() {
                             throw new Error(
                                 `Rate limit exceeded. Please wait ${data.retryAfter} seconds before uploading again.`
                             );
+                        }
+                        if (isConcurrencyError(data.error)) {
+                            setConcurrencyWarning('You are not allowed to multithread your agent as threads are used to allow for multiple games to be played at once not to be used on one agent.');
                         }
                         throw new Error(data.error || 'Upload failed');
                     }
@@ -611,6 +621,15 @@ export default function UploadPage() {
                         )}
 
                         {/* Messages */}
+                        {concurrencyWarning && (
+                            <div className="mt-4 bg-amber-900/40 border border-amber-500/40 rounded-lg p-4 flex items-start gap-3">
+                                <AlertCircle className="w-5 h-5 text-amber-300 mt-0.5" />
+                                <div>
+                                    <p className="text-amber-100 text-sm">{concurrencyWarning}</p>
+                                </div>
+                            </div>
+                        )}
+
                         {error && (
                             <div className="mt-4 bg-red-900/30 border border-red-500/50 rounded-lg p-4 flex items-start gap-3">
                                 <AlertCircle className="w-5 h-5 text-red-400 mt-0.5" />

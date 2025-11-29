@@ -9,7 +9,7 @@ FORBIDDEN_IMPORTS = {
     'os', 'subprocess', 'socket', 'urllib', 'requests',
     'http', 'ftplib', 'telnetlib', 'smtplib', 'ssl',
     '__import__', 'eval', 'exec', 'compile', 'open',
-    'sys', 'importlib', 'pkgutil', 'imp'
+    'sys', 'importlib', 'pkgutil', 'imp', 'multiprocessing'
 }
 
 ALLOWED_STDLIB = {

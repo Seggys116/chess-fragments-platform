@@ -7,6 +7,7 @@ import psycopg2.extras
 import tempfile
 import shutil
 import json
+import re
 from pathlib import Path
 
 sys.path.insert(0, '/app/shared')
@@ -14,6 +15,14 @@ from samples import get_sample0, get_sample1
 from constants import get_default_agent_var
 
 VALIDATION_TIMEOUT = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
+FORBIDDEN_IMPORTS = {'multiprocessing'}
+
+
+def contains_forbidden_import(code: str) -> str | None:
+    for forbidden in FORBIDDEN_IMPORTS:
+        if re.search(rf"\\bimport\\s+{forbidden}\\b", code) or re.search(rf"\\bfrom\\s+{forbidden}\\b", code):
+            return forbidden
+    return None
 
 
 def sanitize_error_message(error: Exception) -> str:
@@ -54,6 +63,11 @@ def validate_agent_in_temp_env(code: str) -> tuple[bool, str | None, int]:
         agent_file = os.path.join(temp_dir, 'agent.py')
         with open(agent_file, 'w') as f:
             f.write(code)
+
+        forbidden_import = contains_forbidden_import(code)
+        if forbidden_import:
+            duration_ms = int((time.time() - start_time) * 1000)
+            return False, f"Forbidden import: {forbidden_import}", duration_ms
 
         import types
         from chessmaker.chess.base import Board

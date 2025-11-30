@@ -1,41 +1,64 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { leaderboardQuerySchema } from '@/lib/security/validation';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const limit = parseInt(searchParams.get('limit') || '50');
-    const offset = parseInt(searchParams.get('offset') || '0');
+    const parsedQuery = leaderboardQuerySchema.safeParse({
+      limit: searchParams.get('limit'),
+      offset: searchParams.get('offset'),
+      includeInactive: searchParams.get('includeInactive') === 'true',
+    });
 
-    const rankings = await prisma.ranking.findMany({
-      where: {
+    if (!parsedQuery.success) {
+      const message = parsedQuery.error.issues.map(issue => issue.message).join(', ');
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+
+    const { limit, offset, includeInactive } = parsedQuery.data;
+
+    const where = {
+      gamesPlayed: {
+        gt: 0,
+      },
+      ...(includeInactive ? {} : {
         agent: {
           active: true,
         },
-        gamesPlayed: {
-          gt: 0,
-        },
-      },
-      include: {
-        agent: true,
-      },
-      orderBy: {
-        eloRating: 'desc',
-      },
-      take: limit,
-      skip: offset,
-    });
+      }),
+    } as const;
 
-    const total = await prisma.ranking.count({
-      where: {
-        agent: {
-          active: true,
+    const [rankings, aggregates] = await Promise.all([
+      prisma.ranking.findMany({
+        where,
+        include: {
+          agent: true,
         },
-        gamesPlayed: {
-          gt: 0,
+        orderBy: {
+          eloRating: 'desc',
         },
-      },
-    });
+        take: limit,
+        skip: offset,
+      }),
+      prisma.ranking.aggregate({
+        where,
+        _count: true,
+        _max: {
+          eloRating: true,
+        },
+        _sum: {
+          gamesPlayed: true,
+        },
+        _avg: {
+          avgMoveTimeMs: true,
+        },
+      }),
+    ]);
+
+    const total = typeof aggregates._count === 'number'
+      ? aggregates._count
+      : aggregates._count?._all ?? 0;
 
     const leaderboard = rankings.map((ranking, index) => ({
       rank: offset + index + 1,
@@ -63,6 +86,11 @@ export async function GET(request: NextRequest) {
       total,
       limit,
       offset,
+      stats: {
+        highestElo: aggregates._max?.eloRating ?? null,
+        totalGames: aggregates._sum?.gamesPlayed ?? 0,
+        avgMoveTimeMs: aggregates._avg?.avgMoveTimeMs ?? null,
+      },
     });
   } catch (error) {
     console.error('Error fetching leaderboard:', error);

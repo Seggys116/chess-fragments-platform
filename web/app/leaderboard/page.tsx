@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import Navigation from '@/components/Navigation';
 import AnimatedBackground from '@/components/AnimatedBackground';
-import { Trophy, TrendingUp, TrendingDown, Clock, Target, Award } from 'lucide-react';
+import { Trophy, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface LeaderboardEntry {
   rank: number;
@@ -21,21 +21,32 @@ interface LeaderboardEntry {
   avgMoveTimeMs: number | null;
 }
 
+interface LeaderboardStats {
+  highestElo: number | null;
+  totalGames: number;
+  avgMoveTimeMs: number | null;
+}
+
 export default function LeaderboardPage() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [userAgentIds, setUserAgentIds] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [stats, setStats] = useState<LeaderboardStats>({
+    highestElo: null,
+    totalGames: 0,
+    avgMoveTimeMs: null,
+  });
 
-  useEffect(() => {
-    fetchLeaderboard();
-    fetchUserAgents();
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(fetchLeaderboard, 30000);
-    return () => clearInterval(interval);
-  }, []);
+  const pageSizeOptions = [10, 20, 50];
+  const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
+  const showingStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const showingEnd = total === 0 ? 0 : Math.min(total, page * pageSize);
 
-  const fetchUserAgents = async () => {
+  const fetchUserAgents = useCallback(async () => {
     try {
       const response = await fetch('/api/dashboard/agents');
       if (response.ok) {
@@ -45,24 +56,72 @@ export default function LeaderboardPage() {
     } catch {
       // Not authenticated or error - ignore silently
     }
-  };
+  }, []);
 
-  const fetchLeaderboard = async () => {
+  const fetchLeaderboard = useCallback(async (options?: { showLoading?: boolean; page?: number; pageSize?: number }) => {
+    const { showLoading = false, page: pageNumber = page, pageSize: pageSizeValue = pageSize } = options || {};
+    const safePage = Math.max(pageNumber, 1);
+    const safePageSize = Math.max(pageSizeValue, 1);
+
     try {
-      const response = await fetch('/api/leaderboard?limit=50');
+      if (showLoading) {
+        setLoading(true);
+      }
+
+      const offset = (safePage - 1) * safePageSize;
+      const response = await fetch(`/api/leaderboard?limit=${safePageSize}&offset=${offset}`);
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(data.error || 'Failed to fetch leaderboard');
       }
 
-      setLeaderboard(data.leaderboard);
+      const calculatedTotalPages = Math.max(1, Math.ceil((data.total || 0) / safePageSize));
+      setTotal(data.total || 0);
+      setStats({
+        highestElo: data.stats?.highestElo ?? null,
+        totalGames: data.stats?.totalGames ?? 0,
+        avgMoveTimeMs: data.stats?.avgMoveTimeMs ?? null,
+      });
       setError('');
+
+      if (safePage > calculatedTotalPages) {
+        setPage(calculatedTotalPages);
+        return;
+      }
+
+      setLeaderboard(data.leaderboard || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
+  }, [page, pageSize]);
+
+  useEffect(() => {
+    fetchLeaderboard({ showLoading: true });
+  }, [fetchLeaderboard]);
+
+  useEffect(() => {
+    fetchUserAgents();
+  }, [fetchUserAgents]);
+
+  useEffect(() => {
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(() => fetchLeaderboard(), 30000);
+    return () => clearInterval(interval);
+  }, [fetchLeaderboard]);
+
+  const handlePageChange = (nextPage: number) => {
+    const clampedPage = Math.min(Math.max(nextPage, 1), totalPages);
+    setPage(clampedPage);
+  };
+
+  const handlePageSizeChange = (value: number) => {
+    setPage(1);
+    setPageSize(value);
   };
 
   // Get medal icon for top 3
@@ -88,25 +147,25 @@ export default function LeaderboardPage() {
             <p className="text-gray-400 text-base sm:text-lg">Top ranked chess AI agents competing for glory</p>
           </div>
 
-          {!loading && leaderboard.length > 0 && (
+          {!loading && total > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-8">
               <div className="bg-gray-800/50 backdrop-blur p-4 rounded-lg border border-purple-500/20 text-center">
-                <div className="text-3xl font-bold text-purple-400">{leaderboard.length}</div>
+                <div className="text-3xl font-bold text-purple-400">{total.toLocaleString()}</div>
                 <div className="text-sm text-gray-400">Active Agents</div>
               </div>
               <div className="bg-gray-800/50 backdrop-blur p-4 rounded-lg border border-purple-500/20 text-center">
-                <div className="text-3xl font-bold text-yellow-400">{leaderboard[0]?.eloRating || '-'}</div>
+                <div className="text-3xl font-bold text-yellow-400">{stats.highestElo ?? '-'}</div>
                 <div className="text-sm text-gray-400">Highest ELO</div>
               </div>
               <div className="bg-gray-800/50 backdrop-blur p-4 rounded-lg border border-purple-500/20 text-center">
                 <div className="text-3xl font-bold text-green-400">
-                  {leaderboard.reduce((sum, e) => sum + e.gamesPlayed, 0)}
+                  {stats.totalGames.toLocaleString()}
                 </div>
                 <div className="text-sm text-gray-400">Total Games</div>
               </div>
               <div className="bg-gray-800/50 backdrop-blur p-4 rounded-lg border border-purple-500/20 text-center">
                 <div className="text-3xl font-bold text-blue-400">
-                  {Math.round(leaderboard.reduce((sum, e) => sum + (e.avgMoveTimeMs || 0), 0) / leaderboard.filter(e => e.avgMoveTimeMs).length)}ms
+                  {stats.avgMoveTimeMs !== null ? `${Math.round(stats.avgMoveTimeMs)}ms` : '-'}
                 </div>
                 <div className="text-sm text-gray-400">Avg Move Time</div>
               </div>
@@ -134,7 +193,7 @@ export default function LeaderboardPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {leaderboard.length >= 3 && (
+              {leaderboard.length >= 3 && leaderboard[0]?.rank === 1 && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                   <div className="order-2 md:order-1">
                     <div className={`bg-gradient-to-br from-gray-700/50 to-gray-800/50 backdrop-blur rounded-lg border p-6 transform md:translate-y-4 hover:scale-105 transition-all duration-300 ${userAgentIds.has(leaderboard[1].agentId) ? 'border-purple-500 ring-2 ring-purple-500' : 'border-gray-500/30'}`}>
@@ -309,6 +368,46 @@ export default function LeaderboardPage() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-6 py-4 bg-gray-900/40 border-t border-purple-500/20">
+                  <div className="text-gray-400 text-sm">
+                    Showing {showingStart}-{showingEnd} of {total.toLocaleString()} agents
+                  </div>
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-400">Rows per page</span>
+                      <select
+                        value={pageSize}
+                        onChange={(event) => handlePageSizeChange(Number(event.target.value))}
+                        className="bg-gray-900/70 border border-purple-500/40 text-white text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      >
+                        {pageSizeOptions.map(option => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handlePageChange(page - 1)}
+                        disabled={page <= 1}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-900/30 transition-colors"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        Previous
+                      </button>
+                      <span className="text-gray-300 text-sm px-2">
+                        Page {Math.min(page, totalPages)} of {totalPages}
+                      </span>
+                      <button
+                        onClick={() => handlePageChange(page + 1)}
+                        disabled={page >= totalPages}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-gray-800/50 border border-purple-500/30 rounded-lg text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-900/30 transition-colors"
+                      >
+                        Next
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

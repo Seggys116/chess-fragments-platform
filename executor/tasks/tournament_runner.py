@@ -23,9 +23,55 @@ import psycopg2.extras
 import os
 import math
 import random
+import json
+import redis
 from datetime import datetime, timezone as tz
 from typing import List, Dict, Tuple
 from executor_registry import get_registry
+
+# Redis connection for bracket caching
+_redis_client = None
+BRACKET_CACHE_KEY = "tournament:bracket_assignments"
+BRACKET_CACHE_TTL = 24 * 60 * 60  # 24 hours
+
+def get_redis():
+    global _redis_client
+    if _redis_client is None:
+        redis_url = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+        _redis_client = redis.from_url(redis_url)
+    return _redis_client
+
+
+def get_cached_brackets() -> Dict[str, List[str]] | None:
+    """Get cached bracket assignments from Redis."""
+    try:
+        r = get_redis()
+        data = r.get(BRACKET_CACHE_KEY)
+        if data:
+            return json.loads(data)
+    except Exception as e:
+        print(f"[SWISS] Error reading bracket cache: {e}")
+    return None
+
+
+def set_cached_brackets(brackets: Dict[str, List[str]]):
+    """Cache bracket assignments in Redis."""
+    try:
+        r = get_redis()
+        r.setex(BRACKET_CACHE_KEY, BRACKET_CACHE_TTL, json.dumps(brackets))
+        print(f"[SWISS] Cached bracket assignments: challenger={len(brackets.get('challenger', []))}, contender={len(brackets.get('contender', []))}, elite={len(brackets.get('elite', []))}")
+    except Exception as e:
+        print(f"[SWISS] Error caching brackets: {e}")
+
+
+def clear_bracket_cache():
+    """Clear cached bracket assignments."""
+    try:
+        r = get_redis()
+        r.delete(BRACKET_CACHE_KEY)
+        print("[SWISS] Cleared bracket cache")
+    except Exception as e:
+        print(f"[SWISS] Error clearing bracket cache: {e}")
 
 
 def is_tournament_time():
@@ -37,9 +83,33 @@ def is_tournament_time():
 
 def get_bracket_agents(cur, bracket_id: str) -> list:
     """
-    Get agents for a specific bracket based on ELO percentile.
+    Get agents for a specific bracket.
+    Uses cached bracket assignments if available (fixed at tournament start).
     Only includes uploaded (server) agents, not linked (local) agents.
     """
+    # Try to use cached brackets first (fixed at tournament start)
+    cached = get_cached_brackets()
+    if cached and bracket_id in cached:
+        agent_ids = cached[bracket_id]
+        if not agent_ids:
+            return []
+        # Fetch agent details for cached IDs
+        cur.execute("""
+            SELECT
+                a.id,
+                a.name,
+                a.code_text,
+                a.execution_mode,
+                COALESCE(r.elo_rating, 1500) as elo_rating,
+                COALESCE(r.games_played, 0) as games_played
+            FROM agents a
+            LEFT JOIN rankings r ON a.id = r.agent_id
+            WHERE a.id = ANY(%s)
+            ORDER BY elo_rating ASC
+        """, (agent_ids,))
+        return cur.fetchall()
+
+    # Fallback to dynamic calculation if no cache
     cur.execute("""
         WITH ranked_agents AS (
             SELECT
@@ -85,7 +155,13 @@ def get_bracket_agents(cur, bracket_id: str) -> list:
 
 
 def get_bracket_agent_ids(cur, bracket_id: str) -> List[str]:
-    """Get just the agent IDs for a bracket."""
+    """Get just the agent IDs for a bracket. Uses cached brackets if available."""
+    # Try to use cached brackets first (fixed at tournament start)
+    cached = get_cached_brackets()
+    if cached and bracket_id in cached:
+        return cached[bracket_id]
+
+    # Fallback to dynamic calculation if no cache
     agents = get_bracket_agents(cur, bracket_id)
     return [a['id'] for a in agents]
 
@@ -405,6 +481,7 @@ def initialize_tournament():
     Initialize tournament mode:
     - Cancel all in-progress and pending non-tournament matches
     - Deactivate all local (non-uploaded) agents
+    - Snapshot bracket assignments to Redis (fixed for entire tournament)
     """
     global _tournament_initialized
     if _tournament_initialized:
@@ -437,6 +514,44 @@ def initialize_tournament():
         print(f"[TOURNAMENT] Deactivated {len(deactivated_agents)} local agents")
 
         conn.commit()
+
+        # Snapshot bracket assignments - this is the key fix!
+        # Get all eligible agents ONCE and cache the bracket assignments
+        cur.execute("""
+            SELECT
+                a.id,
+                COALESCE(r.elo_rating, 1500) as elo_rating
+            FROM agents a
+            LEFT JOIN rankings r ON a.id = r.agent_id
+            WHERE a.active = true
+            AND a.execution_mode = 'server'
+            AND COALESCE(r.games_played, 0) > 0
+            ORDER BY elo_rating ASC
+        """)
+        all_agents = cur.fetchall()
+        total = len(all_agents)
+
+        brackets: Dict[str, List[str]] = {
+            'challenger': [],
+            'contender': [],
+            'elite': []
+        }
+
+        if total > 0:
+            if total < 8:
+                # All agents go to contender
+                brackets['contender'] = [a['id'] for a in all_agents]
+            else:
+                bottom_25_end = max(1, round(total * 0.25))
+                top_25_start = max(bottom_25_end, round(total * 0.75))
+
+                brackets['challenger'] = [a['id'] for a in all_agents[:bottom_25_end]]
+                brackets['contender'] = [a['id'] for a in all_agents[bottom_25_end:top_25_start]]
+                brackets['elite'] = [a['id'] for a in all_agents[top_25_start:]]
+
+        # Cache the bracket assignments
+        set_cached_brackets(brackets)
+
         _tournament_initialized = True
         print("[TOURNAMENT] Tournament initialized successfully")
 

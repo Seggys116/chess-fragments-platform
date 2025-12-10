@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
+import { getCachedBrackets } from '@/lib/tournament-cache';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,8 +51,16 @@ export async function GET(request: NextRequest) {
                 safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type, ...data as object })}\n\n`));
             };
 
-            // Get bracket agent IDs
+            // Get bracket agent IDs - use cached brackets if available
             const getBracketAgentIds = async (): Promise<string[]> => {
+                // Try cached brackets first (fixed at tournament start)
+                const cachedBrackets = await getCachedBrackets();
+                if (cachedBrackets) {
+                    const bracketKey = bracketId as keyof typeof cachedBrackets;
+                    return cachedBrackets[bracketKey] || [];
+                }
+
+                // Fallback to dynamic calculation if no cache
                 const rankings = await prisma.ranking.findMany({
                     where: {
                         gamesPlayed: { gt: 0 },
@@ -327,8 +336,33 @@ export async function GET(request: NextRequest) {
                                 },
                             });
 
-                            // Bracket is complete if there are completed matches but no pending/in_progress
-                            if (completedCount > 0 && pendingCount === 0 && inProgressCount === 0) {
+                            // Bracket is complete only if Swiss rounds are finished
+                            // Calculate expected rounds and check if all agents have played enough
+                            const totalRounds = Math.min(Math.max(3, Math.ceil(Math.log2(bracketAgentIds.length))), bracketAgentIds.length - 1);
+
+                            // Count matches per agent to verify completion
+                            const matchesPerAgent: Record<string, number> = {};
+                            bracketAgentIds.forEach(id => matchesPerAgent[id] = 0);
+
+                            const allCompletedMatches = await prisma.match.findMany({
+                                where: {
+                                    matchType: 'tournament',
+                                    status: 'completed',
+                                    whiteAgentId: { in: bracketAgentIds },
+                                    blackAgentId: { in: bracketAgentIds },
+                                },
+                                select: { whiteAgentId: true, blackAgentId: true },
+                            });
+
+                            for (const m of allCompletedMatches) {
+                                if (matchesPerAgent[m.whiteAgentId] !== undefined) matchesPerAgent[m.whiteAgentId]++;
+                                if (matchesPerAgent[m.blackAgentId] !== undefined) matchesPerAgent[m.blackAgentId]++;
+                            }
+
+                            const minMatchesPlayed = Math.min(...Object.values(matchesPerAgent));
+                            const bracketActuallyComplete = minMatchesPlayed >= totalRounds && pendingCount === 0 && inProgressCount === 0;
+
+                            if (bracketActuallyComplete) {
                                 sendEvent('bracket_complete', {
                                     bracket: bracketId,
                                     totalMatches: completedCount,

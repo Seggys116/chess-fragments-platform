@@ -362,13 +362,12 @@ def run_match_task(match_id: str):
         conn.commit()
         print(f"Match {match_id} completed: {result}")
 
-        # Trigger ELO rating update for matchmaking and tournament games (not for errors or exhibitions)
-        if match.get('match_type') in ('matchmaking', 'tournament'):
+        # Trigger ELO rating update for matchmaking games only (not tournament - ELO is locked during tournament)
+        if match.get('match_type') == 'matchmaking':
             update_match_ratings.delay(match_id)
-            # Trigger immediate rescheduling to fill the now-available slot (matchmaking only)
-            if match.get('match_type') == 'matchmaking':
-                schedule_round_robin.delay() if not is_tournament_time() else None
-            # Tournament matches: schedule_all_brackets is handled by celery beat
+            # Trigger immediate rescheduling to fill the now-available slot
+            schedule_round_robin.delay() if not is_tournament_time() else None
+        # Tournament matches: no ELO changes, schedule_all_brackets is handled by celery beat
 
     except Exception as e:
         import traceback

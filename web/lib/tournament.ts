@@ -1,3 +1,5 @@
+// Client-safe tournament utilities (no server dependencies)
+
 export function isTournamentOverrideActive(): boolean {
     // Set to true to bypass countdown/locks for testing
     return false;

@@ -2,16 +2,19 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, Activity, Trophy, LayoutDashboard, Upload, Link as LinkIcon, LogOut, Menu, X } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { Home, Activity, Trophy, LayoutDashboard, Upload, Link as LinkIcon, LogOut, Menu, X, Swords, Award } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { isTournamentLockActive } from '@/lib/tournament';
 
 const navItems = [
   { href: '/', label: 'Home', icon: Home },
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, requiresAuth: true },
-  { href: '/live', label: 'Live', icon: Activity },
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, requiresAuth: true, hideDuringTournament: true },
+  { href: '/live', label: 'Live', icon: Activity, hideDuringTournament: true },
   { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
-  { href: '/link-agent', label: 'Link Agent', icon: LinkIcon, requiresAuth: true },
-  { href: '/upload', label: 'Upload', icon: Upload, requiresAuth: true },
+  { href: '/tournament', label: 'Tournament', icon: Swords },
+  { href: '/achievements', label: 'Achievements', icon: Award, showDuringTournament: true },
+  { href: '/link-agent', label: 'Link Agent', icon: LinkIcon, requiresAuth: true, hideDuringTournament: true },
+  { href: '/upload', label: 'Upload', icon: Upload, requiresAuth: true, hideDuringTournament: true },
 ];
 
 export default function Navigation() {
@@ -19,11 +22,18 @@ export default function Navigation() {
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [now, setNow] = useState<Date>(new Date());
+  const tournamentLocked = useMemo(() => isTournamentLockActive(now), [now]);
 
   useEffect(() => {
     const accessCode = localStorage.getItem('fragmentarena_code');
     setIsAuthenticated(!!accessCode);
   }, [pathname]);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('fragmentarena_code');
@@ -34,6 +44,10 @@ export default function Navigation() {
   const visibleItems = navItems.filter(item => {
     // Filter by auth requirement
     if (item.requiresAuth && !isAuthenticated) return false;
+    // Hide certain items during tournament mode
+    if (item.hideDuringTournament && tournamentLocked) return false;
+    // Show items marked for tournament only during tournament
+    if (item.showDuringTournament && !tournamentLocked) return false;
     return true;
   });
 
@@ -86,7 +100,7 @@ export default function Navigation() {
               </button>
             )}
 
-            {!isAuthenticated && pathname !== '/start' && (
+            {!isAuthenticated && pathname !== '/start' && !tournamentLocked && (
               <Link
                 href="/start"
                 className="ml-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
@@ -145,7 +159,7 @@ export default function Navigation() {
                 </button>
               )}
 
-              {!isAuthenticated && pathname !== '/start' && (
+              {!isAuthenticated && pathname !== '/start' && !tournamentLocked && (
                 <Link
                   href="/start"
                   onClick={() => setMobileMenuOpen(false)}

@@ -57,11 +57,11 @@ export async function GET(
             timeout_count: bigint;
         }>>`
       SELECT
-        MIN(gs.move_time_ms) FILTER (WHERE gs.move_time_ms <= 14000)::float as min,
-        MAX(gs.move_time_ms) FILTER (WHERE gs.move_time_ms <= 14000)::float as max,
-        AVG(gs.move_time_ms) FILTER (WHERE gs.move_time_ms <= 14000)::float as avg,
-        STDDEV(gs.move_time_ms) FILTER (WHERE gs.move_time_ms <= 14000)::float as stddev,
-        COUNT(*) FILTER (WHERE gs.move_time_ms IS NOT NULL AND gs.move_time_ms <= 14000) as count,
+        MIN(gs.move_time_ms) FILTER (WHERE gs.move_time_ms > 0 AND gs.move_time_ms <= 14000)::float as min,
+        MAX(gs.move_time_ms) FILTER (WHERE gs.move_time_ms > 0 AND gs.move_time_ms <= 14000)::float as max,
+        AVG(gs.move_time_ms) FILTER (WHERE gs.move_time_ms > 0 AND gs.move_time_ms <= 14000)::float as avg,
+        STDDEV(gs.move_time_ms) FILTER (WHERE gs.move_time_ms > 0 AND gs.move_time_ms <= 14000)::float as stddev,
+        COUNT(*) FILTER (WHERE gs.move_time_ms IS NOT NULL AND gs.move_time_ms > 0 AND gs.move_time_ms <= 14000) as count,
         COUNT(*) FILTER (WHERE gs.move_time_ms IS NULL OR gs.move_time_ms > 14000) as timeout_count
       FROM game_states gs
       INNER JOIN matches m ON gs.match_id = m.id
@@ -157,8 +157,10 @@ export async function GET(
                 return isWhite ? isWhiteMove : !isWhiteMove;
             });
 
-            const avgMoveTime = agentMoves.length > 0
-                ? agentMoves.reduce((sum, s) => sum + (s.moveTimeMs || 0), 0) / agentMoves.length
+            // Exclude 0ms moves from average calculation
+            const validMoves = agentMoves.filter(s => s.moveTimeMs && s.moveTimeMs > 0);
+            const avgMoveTime = validMoves.length > 0
+                ? validMoves.reduce((sum, s) => sum + (s.moveTimeMs || 0), 0) / validMoves.length
                 : 0;
 
             return {

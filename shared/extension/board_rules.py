@@ -2,7 +2,7 @@ import concurrent.futures
 from chessmaker.chess.pieces import King
 from chessmaker.chess.results import no_kings, checkmate
 
-THINKING_TIME_BUDGET = 14.0 # (secs)
+THINKING_TIME_BUDGET = 16.0 # (secs)
 GAME_TIME_BUDGET = 300.0 # (secs)
 
 def _position_key(board):

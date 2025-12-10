@@ -32,13 +32,13 @@ def update_match_ratings(match_id: str):
             print(f"Match {match_id} not found or not completed")
             return
 
-        # Calculate average move times for each agent
+        # Calculate average move times for each agent (exclude 0ms moves - these are artifacts)
         cur.execute("""
             SELECT
                 AVG(CASE WHEN move_number %% 2 = 1 THEN move_time_ms END) as white_avg_time,
                 AVG(CASE WHEN move_number %% 2 = 0 THEN move_time_ms END) as black_avg_time
             FROM game_states
-            WHERE match_id = %s AND move_time_ms IS NOT NULL
+            WHERE match_id = %s AND move_time_ms IS NOT NULL AND move_time_ms > 0
         """, (match_id,))
 
         move_times = cur.fetchone()

@@ -22,8 +22,15 @@ def contains_forbidden_import(code: str) -> str | None:
     for forbidden in FORBIDDEN_IMPORTS:
         if re.search(rf"\\bimport\\s+{forbidden}\\b", code) or re.search(rf"\\bfrom\\s+{forbidden}\\b", code):
             return forbidden
-    return None
 
+    # Check for forbidden gc import
+    if re.search(rf"\\bimport\\s+gc\\b", code) or re.search(rf"\\bfrom\\s+gc\\b", code):
+        # Check for valid garbage collection usage
+        if re.search(r"gc\\.disable", code) and re.search(r"gc\\.enable", code):
+            return None
+        return 'gc'
+
+    return None
 
 def sanitize_error_message(error: Exception) -> str:
     error_type = type(error).__name__

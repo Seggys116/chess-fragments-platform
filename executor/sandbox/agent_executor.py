@@ -10,6 +10,7 @@ import time
 import random
 import signal
 from pathlib import Path
+import gc
 
 # Add shared directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'shared'))
@@ -18,11 +19,11 @@ from itertools import cycle
 from chessmaker.chess.base import Board, Player
 from extension.board_utils import list_legal_moves_for, copy_piece_move
 from extension.board_rules import get_result, GAME_TIME_BUDGET
-from constants import get_default_agent_var
+from constants import get_default_agent_var, cap_move_time, AGENT_TOLD_TIMEOUT
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
-# Global timeout for agent moves - read from environment
-AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
+# Global timeout for agent moves - read from environment (system-level check)
+AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '16.0'))
 # Total game time limit (defaults to 300s from board_rules)
 TOTAL_GAME_TIME_LIMIT = GAME_TIME_BUDGET
 
@@ -42,7 +43,7 @@ def execute_agent_with_timeout(agent_func, board, player, timeout_seconds, var=N
     try:
         result = future.result(timeout=timeout_seconds)
         end_time = time.time()
-        move_time_ms = int((end_time - start_time) * 1000)
+        move_time_ms = cap_move_time(int((end_time - start_time) * 1000))
 
         if result is None or not isinstance(result, tuple) or len(result) != 2:
             return None, None, move_time_ms, False
@@ -60,20 +61,29 @@ def execute_agent_with_timeout(agent_func, board, player, timeout_seconds, var=N
         future.cancel()
         # Return None for move_time_ms to indicate timeout
         return None, None, None, True
-
+    
     except Exception as e:
         end_time = time.time()
-        move_time_ms = int((end_time - start_time) * 1000)
+        move_time_ms = cap_move_time(int((end_time - start_time) * 1000))
         print(f"Agent execution error: {e}")
         return None, None, move_time_ms, False
-
+    
     finally:
+        gc.enable() # Fuck you agent_47
+        gc.collect()
         executor.shutdown(wait=False)
 
 
-def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
+def run_match_local(white_code: str, black_code: str, board_sample, on_move_callback=None) -> dict:
     """
     Run a match between two agents locally (without Docker for testing)
+
+    Args:
+        white_code: Code for white agent
+        black_code: Code for black agent
+        board_sample: Initial board setup
+        on_move_callback: Optional callback(move_number, board_state, move_time_ms, notation, evaluation)
+                         Called after each move for live updates
 
     Returns:
         {
@@ -166,7 +176,7 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
 
     turn_order = cycle(players)
     moves = 0
-    max_moves = 500
+    max_moves = 150
     game_states = []
     max_retries_per_move = 5
 
@@ -221,7 +231,7 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
                     board,
                     player,
                     AGENT_TIMEOUT_SECONDS,
-                    [white_ply, AGENT_TIMEOUT_SECONDS],
+                    [white_ply, AGENT_TOLD_TIMEOUT],
                 )
                 if timed_out:
                     print(f"White agent TIMEOUT on move {moves} - will forfeit game")
@@ -232,7 +242,7 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
                     board,
                     player,
                     AGENT_TIMEOUT_SECONDS,
-                    [black_ply, AGENT_TIMEOUT_SECONDS],
+                    [black_ply, AGENT_TOLD_TIMEOUT],
                 )
                 if timed_out:
                     print(f"Black agent TIMEOUT on move {moves} - will forfeit game")
@@ -338,12 +348,20 @@ def run_match_local(white_code: str, black_code: str, board_sample) -> dict:
 
             # Record game state - use None for move_time_ms if timeout occurred
             # The UI will display this as "Timeout"
+            board_state = serialize_board(board)
             game_states.append({
                 'move_number': moves,
-                'board_state': serialize_board(board),
+                'board_state': board_state,
                 'move_time_ms': move_time_ms,  # Will be None if timed out
                 'notation': notation
             })
+
+            # Call live update callback if provided
+            if on_move_callback:
+                try:
+                    on_move_callback(moves, board_state, move_time_ms, notation)
+                except Exception as cb_err:
+                    print(f"[EXECUTOR] Live callback error on move {moves}: {cb_err}")
 
             # Check for game end
             result = get_result(board)

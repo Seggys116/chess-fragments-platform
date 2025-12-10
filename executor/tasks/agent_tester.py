@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'shared'))
 from samples import get_sample0
 from constants import get_default_agent_var
 
-VALIDATION_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
+VALIDATION_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '16.0'))
 
 
 def sanitize_error_message(error: Exception) -> str:
@@ -129,7 +129,7 @@ try:
 
     # Test agent
     start = time.time()
-    result = agent_func(board, white, ['ply', 14])
+    result = agent_func(board, white, ['ply', 16])
     duration = time.time() - start
 
     # Validate result

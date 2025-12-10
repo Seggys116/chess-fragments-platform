@@ -149,11 +149,12 @@ export async function GET(
     const whiteTimeouts = whiteMoves.filter(m => m.moveTimeMs === null).length;
     const blackTimeouts = blackMoves.filter(m => m.moveTimeMs === null).length;
 
-    const whiteTotalTime = whiteMoves.reduce((sum, m) => sum + (m.moveTimeMs || 0), 0);
-    const blackTotalTime = blackMoves.reduce((sum, m) => sum + (m.moveTimeMs || 0), 0);
+    // Exclude 0ms moves from time calculations (artifacts)
+    const whiteValidMoves = whiteMoves.filter(m => m.moveTimeMs !== null && m.moveTimeMs > 0);
+    const blackValidMoves = blackMoves.filter(m => m.moveTimeMs !== null && m.moveTimeMs > 0);
 
-    const whiteValidMoves = whiteMoves.filter(m => m.moveTimeMs !== null);
-    const blackValidMoves = blackMoves.filter(m => m.moveTimeMs !== null);
+    const whiteTotalTime = whiteValidMoves.reduce((sum, m) => sum + (m.moveTimeMs || 0), 0);
+    const blackTotalTime = blackValidMoves.reduce((sum, m) => sum + (m.moveTimeMs || 0), 0);
 
     const whiteAvgTime = whiteValidMoves.length > 0
       ? Math.round(whiteTotalTime / whiteValidMoves.length)

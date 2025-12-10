@@ -12,9 +12,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_dev_password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      # Mount the init directory; add .sql/.sh files inside postgres/init to seed the DB
+      - ./postgres/init:/docker-entrypoint-initdb.d
     networks:
       - internal
+      - external # Allow external network access for remote executors
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -24,13 +26,23 @@ services:
   redis:
     image: redis:7-alpine
     container_name: fragmentarena-redis
+    ports:
+      - "6380:6379" # Expose Redis on port 6380 for external executors
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_dev_password}
     networks:
       - internal
+      - external # Allow external network access for remote executors
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "-a",
+          "${REDIS_PASSWORD:-redis_dev_password}",
+          "ping",
+        ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -57,7 +69,7 @@ services:
     container_name: fragmentarena-web
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379
       NODE_ENV: ${NODE_ENV:-development}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev_secret_change_in_production}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
@@ -84,6 +96,8 @@ services:
 
       # Public environment variables (accessible to client-side Next.js)
       NEXT_PUBLIC_AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
+      TOURNAMENT_NOW: ${TOURNAMENT_NOW:-false}
+      NEXT_PUBLIC_TOURNAMENT_NOW: ${TOURNAMENT_NOW:-false}
 
       # Security Configuration
       AUTO_BLOCK_ENABLED: ${AUTO_BLOCK_ENABLED:-true}
@@ -118,13 +132,21 @@ services:
       dockerfile: ./executor/Dockerfile
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
-      REDIS_URL: redis://redis:6379
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379/1
 
       # Agent execution limits
       AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
       AGENT_MEMORY_LIMIT_MB: ${AGENT_MEMORY_LIMIT_MB:-512}
+
+      # Tournament mode
+      TOURNAMENT_NOW: ${TOURNAMENT_NOW:-false}
+
+      # Executor registry configuration
+      EXECUTOR_IS_EXTERNAL: "false"
+      EXECUTOR_CONCURRENCY: "8"
+      MATCHES_PER_EXECUTOR: ${MATCHES_PER_EXECUTOR:-4}
     networks:
       - internal # Only internal network - NO internet access
     depends_on:
@@ -136,7 +158,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock # For spawning agent containers
     command: celery -A worker worker --loglevel=info --concurrency=8 --pool=threads
     deploy:
-      replicas: 4
+      replicas: 6
 
   celery-beat:
     build:
@@ -145,13 +167,16 @@ services:
     container_name: fragmentarena-beat
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
-      REDIS_URL: redis://redis:6379
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379/1
 
       # Agent execution limits (for scheduled match runs)
       AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
       AGENT_MEMORY_LIMIT_MB: ${AGENT_MEMORY_LIMIT_MB:-512}
+
+      # Tournament mode
+      TOURNAMENT_NOW: ${TOURNAMENT_NOW:-false}
     networks:
       - internal # Only internal network - NO internet access
     depends_on:
@@ -198,7 +223,7 @@ services:
     container_name: fragmentarena-localagent
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379
       JWT_SECRET: ${JWT_SECRET:-${NEXTAUTH_SECRET:-dev_jwt_secret_change_in_production}}
       WS_PORT: 9002
       PYTHONUNBUFFERED: 1
@@ -248,15 +273,15 @@ services:
       dockerfile: ./executor/Dockerfile.localagent
     container_name: fragmentarena-tcp
     ports:
-      - "9000:9000"  # Direct P2P TCP port
+      - "9000:9000" # Direct P2P TCP port
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_dev_password}@postgres:5432/fragmentarena
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379
       PYTHONUNBUFFERED: 1
       AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
     networks:
       - internal
-      - external  # Needs external for direct P2P connections
+      - external # Needs external for direct P2P connections
     depends_on:
       postgres:
         condition: service_healthy

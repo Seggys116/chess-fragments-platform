@@ -6,6 +6,7 @@ import os
 import json
 import sys
 import time
+from datetime import datetime, timezone as tz
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'shared'))
@@ -13,6 +14,14 @@ from samples import get_sample0, get_sample1
 from random_boards import get_random_board
 import random
 from tasks.elo_updater import update_match_ratings
+from executor_registry import get_registry
+
+
+def is_tournament_time():
+    """Check if tournament should be active based on start time."""
+    tournament_start = datetime(2025, 12, 12, 17, 0, 0, tzinfo=tz.utc)
+    now = datetime.now(tz.utc)
+    return now >= tournament_start
 
 
 def serialize_initial_board(board_squares):
@@ -117,6 +126,7 @@ def run_match_task(match_id: str):
 
         # Determine if this is an exhibition match (should have delays)
         is_exhibition = match.get('match_type') == 'exhibition'
+        is_tournament = match.get('match_type') == 'tournament'
         move_delay = 1.5 if is_exhibition else 0  # 1-2 seconds for exhibition
 
         # Update status to in_progress
@@ -127,11 +137,9 @@ def run_match_task(match_id: str):
         """, (match_id,))
         conn.commit()
 
-        # Select board: 60% chance of sample boards, 40% chance of random
-        board_selection = random.random()
-        if board_selection < 0.60:
-            # 60% - Use sample boards (alternate between sample0 and sample1)
-            # Use match_id to deterministically select which sample board
+        # Select board based on match type
+        if is_tournament:
+            # Tournament matches: ALWAYS use sample boards (no random)
             if hash(match_id) % 2 == 0:
                 board = get_sample0()
                 board_type = "sample0"
@@ -139,9 +147,18 @@ def run_match_task(match_id: str):
                 board = get_sample1()
                 board_type = "sample1"
         else:
-            # 40% - Use random board
-            board = get_random_board()
-            board_type = "random"
+            # Non-tournament: 60% sample boards, 40% random
+            board_selection = random.random()
+            if board_selection < 0.60:
+                if hash(match_id) % 2 == 0:
+                    board = get_sample0()
+                    board_type = "sample0"
+                else:
+                    board = get_sample1()
+                    board_type = "sample1"
+            else:
+                board = get_random_board()
+                board_type = "random"
 
         print(f"Match {match_id} using board type: {board_type}")
 
@@ -169,11 +186,42 @@ def run_match_task(match_id: str):
             print(f"Error inserting initial game state: {state_error}")
             conn.rollback()
 
+        # Create live update callback for tournament matches (enables real-time viewing)
+        # Only tournament matches need live updates - matchmaking can batch at end
+        def live_move_callback(move_number, board_state, move_time_ms, notation):
+            """Save each move to database immediately for live viewing"""
+            try:
+                evaluation = calculate_evaluation(board_state, move_number % 2)
+                cur.execute("""
+                    INSERT INTO game_states (id, match_id, move_number, board_state, move_time_ms, move_notation, evaluation)
+                    VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (match_id, move_number) DO NOTHING
+                """, (
+                    match_id,
+                    move_number,
+                    json.dumps(board_state),
+                    move_time_ms or 0,
+                    notation or '',
+                    evaluation
+                ))
+                conn.commit()
+                print(f"[LIVE] Saved move {move_number} for match {match_id}")
+            except Exception as e:
+                print(f"[LIVE] Error saving move {move_number}: {e}")
+                conn.rollback()
+
+        # Use live callback only for tournament matches
+        use_live_callback = match.get('match_type') == 'tournament'
+
         # Check if we have any local agents
         has_local_agents = (match['white_execution_mode'] == 'local' or match['black_execution_mode'] == 'local')
 
-        if has_local_agents:
-            # Use hybrid executor for matches with local agents
+        # Determine if this executor is external
+        is_external_executor = os.getenv('EXECUTOR_IS_EXTERNAL', 'false').lower() == 'true'
+
+        # Use hybrid executor for all matches (supports both local and server agents)
+        # Both internal and external executors can now run local agent matches
+        if has_local_agents or not is_external_executor:
             from sandbox.hybrid_match_executor import run_hybrid_match
             result = run_hybrid_match(
                 white_agent_id=match['white_agent_id'],
@@ -185,11 +233,17 @@ def run_match_task(match_id: str):
                 black_execution_mode=match['black_execution_mode'],
                 black_name=match['black_name'],
                 board_sample=board,
-                match_id=match_id
+                match_id=match_id,
+                on_move_callback=live_move_callback if use_live_callback else None
             )
         else:
-            # All server agents - use existing executor
-            result = run_match_local(match['white_code'], match['black_code'], board)
+            # External executors running server-vs-server matches can use simpler executor
+            result = run_match_local(
+                match['white_code'],
+                match['black_code'],
+                board,
+                on_move_callback=live_move_callback if use_live_callback else None
+            )
 
         if result.get('termination') == 'cancelled':
             cancel_reason = result.get('error', 'Local agent disconnected')
@@ -211,7 +265,7 @@ def run_match_task(match_id: str):
                 conn.rollback()
 
             if match.get('match_type') == 'matchmaking':
-                schedule_round_robin.delay()
+                schedule_round_robin.delay() if not is_tournament_time() else None
             return
 
         # Check if match ended in error with insufficient moves (< 2 per agent = < 4 total)
@@ -238,40 +292,41 @@ def run_match_task(match_id: str):
                 conn.rollback()
 
             if match.get('match_type') == 'matchmaking':
-                schedule_round_robin.delay()
+                schedule_round_robin.delay() if not is_tournament_time() else None
             return
 
         # Insert game states with delay for exhibition matches
-        for state in result['game_states']:
-            # Calculate evaluation for this position
-            evaluation = calculate_evaluation(state['board_state'], state['move_number'] % 2)
+        # Skip for tournament matches - they were already saved live via callback
+        if not use_live_callback:
+            for state in result['game_states']:
+                # Calculate evaluation for this position
+                evaluation = calculate_evaluation(state['board_state'], state['move_number'] % 2)
 
-            try:
-                cur.execute("""
-                    INSERT INTO game_states (id, match_id, move_number, board_state, move_time_ms, move_notation, evaluation)
-                    VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (match_id, move_number) DO NOTHING
-                """, (
-                    match_id,
-                    state['move_number'],
-                    json.dumps(state['board_state']),
-                    state.get('move_time_ms', 0),
-                    state.get('notation', ''),
-                    evaluation
-                ))
-                conn.commit()
-            except Exception as state_error:
-                print(f"Error inserting game state for move {state['move_number']}: {state_error}")
-                conn.rollback()
+                try:
+                    cur.execute("""
+                        INSERT INTO game_states (id, match_id, move_number, board_state, move_time_ms, move_notation, evaluation)
+                        VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (match_id, move_number) DO NOTHING
+                    """, (
+                        match_id,
+                        state['move_number'],
+                        json.dumps(state['board_state']),
+                        state.get('move_time_ms', 0),
+                        state.get('notation', ''),
+                        evaluation
+                    ))
+                    conn.commit()
+                except Exception as state_error:
+                    print(f"Error inserting game state for move {state['move_number']}: {state_error}")
+                    conn.rollback()
 
-            # Add delay for exhibition matches (live viewing)
-            if is_exhibition and move_delay > 0:
-                time.sleep(move_delay)
+                # Add delay for exhibition matches (live viewing)
+                if is_exhibition and move_delay > 0:
+                    time.sleep(move_delay)
 
         # Validate game has at least 4 moves to be considered legitimate
         # Games with 3 or fewer moves are invalid (< 2 per agent) - delete them entirely
-        # EXCEPTION: Timeout games are always valid - agent forfeited by timing out
-        if result['moves'] <= 3 and result['termination'] != 'timeout':
+        if result['moves'] <= 3:
             print(f"Match {match_id} INVALID: Only {result['moves']} move(s), deleting from database")
 
             try:
@@ -290,7 +345,7 @@ def run_match_task(match_id: str):
                 conn.rollback()
 
             if match.get('match_type') == 'matchmaking':
-                schedule_round_robin.delay()
+                schedule_round_robin.delay() if not is_tournament_time() else None
             return
 
         # Update match with results
@@ -307,11 +362,13 @@ def run_match_task(match_id: str):
         conn.commit()
         print(f"Match {match_id} completed: {result}")
 
-        # Trigger ELO rating update for matchmaking games only (not for errors)
-        if match.get('match_type') == 'matchmaking':
+        # Trigger ELO rating update for matchmaking and tournament games (not for errors or exhibitions)
+        if match.get('match_type') in ('matchmaking', 'tournament'):
             update_match_ratings.delay(match_id)
-            # Trigger immediate rescheduling to fill the now-available slot
-            schedule_round_robin.delay()
+            # Trigger immediate rescheduling to fill the now-available slot (matchmaking only)
+            if match.get('match_type') == 'matchmaking':
+                schedule_round_robin.delay() if not is_tournament_time() else None
+            # Tournament matches: schedule_all_brackets is handled by celery beat
 
     except Exception as e:
         import traceback
@@ -344,51 +401,34 @@ def schedule_round_robin():
     Schedule continuous matchmaking - ensure 1 game is running at any moment.
     This is called periodically by Celery Beat.
     """
+    # TOURNAMENT MODE: No regular matchmaking allowed
+    if is_tournament_time():
+        print("[MATCHMAKING] Tournament mode active - skipping regular matchmaking")
+        return
+
     conn = psycopg2.connect(os.getenv('DATABASE_URL'))
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     try:
-        # Check how many matchmaking games are currently in progress by type
-        # server vs server: limit 8 (executor resource constrained)
-        # local vs server: limit 8 (separate limit stack, executor resource constrained)
+        # Get dynamic match limit from executor registry (4 matches per executor)
+        # Single shared pool for all match types (server-vs-server and local-vs-server)
         # local vs local: unlimited (runs on user machines)
+        MAX_MATCHES = get_registry().get_match_limit()
 
-        # Count server vs server matches
+        # Count all active matchmaking matches that use executor resources
+        # (excludes local-vs-local which runs on user machines)
         cur.execute("""
             SELECT COUNT(*) as count FROM matches m
             JOIN agents wa ON m.white_agent_id = wa.id
             JOIN agents ba ON m.black_agent_id = ba.id
             WHERE m.match_type = 'matchmaking'
             AND m.status IN ('pending', 'in_progress')
-            AND wa.execution_mode = 'server'
-            AND ba.execution_mode = 'server'
+            AND NOT (wa.execution_mode = 'local' AND ba.execution_mode = 'local')
         """)
         result = cur.fetchone()
-        current_server_vs_server = result['count'] if result else 0
+        current_matches = result['count'] if result else 0
 
-        # Count local vs server matches (either direction)
-        cur.execute("""
-            SELECT COUNT(*) as count FROM matches m
-            JOIN agents wa ON m.white_agent_id = wa.id
-            JOIN agents ba ON m.black_agent_id = ba.id
-            WHERE m.match_type = 'matchmaking'
-            AND m.status IN ('pending', 'in_progress')
-            AND (
-                (wa.execution_mode = 'local' AND ba.execution_mode = 'server')
-                OR (wa.execution_mode = 'server' AND ba.execution_mode = 'local')
-            )
-        """)
-        result = cur.fetchone()
-        current_local_vs_server = result['count'] if result else 0
-
-        # Limits
-        MAX_SERVER_VS_SERVER = 16
-        MAX_LOCAL_VS_SERVER = 16
-
-        server_vs_server_full = current_server_vs_server >= MAX_SERVER_VS_SERVER
-        local_vs_server_full = current_local_vs_server >= MAX_LOCAL_VS_SERVER
-
-        print(f"Server vs Server: {current_server_vs_server}/{MAX_SERVER_VS_SERVER}, Local vs Server: {current_local_vs_server}/{MAX_LOCAL_VS_SERVER}")
+        print(f"Active matches: {current_matches}/{MAX_MATCHES} (dynamic limit from {get_registry().get_active_executors().__len__()} executors)")
 
         # Get all active agents with current active match counts and rankings
         # Prioritize agents with fewer active matches for fair distribution
@@ -447,19 +487,18 @@ def schedule_round_robin():
             print("Not enough agents for matchmaking")
             return
 
-        # Calculate total slots available across both limits
-        server_slots_available = MAX_SERVER_VS_SERVER - current_server_vs_server
-        local_slots_available = MAX_LOCAL_VS_SERVER - current_local_vs_server
+        # Calculate slots available in shared pool
+        slots_available = MAX_MATCHES - current_matches
 
-        print(f"Slots available - Server vs Server: {server_slots_available}, Local vs Server: {local_slots_available}")
+        print(f"Slots available: {slots_available}")
 
-        # Don't schedule if both limits are at or over capacity (race condition protection)
-        if server_slots_available <= 0 and local_slots_available <= 0:
+        # Don't schedule if at capacity (race condition protection)
+        if slots_available <= 0:
             print("All match slots at capacity, skipping scheduling")
             return
 
         scheduled_count = 0
-        max_attempts = 3  # Limit to prevent race conditions (schedule max 3 per round)
+        max_attempts = min(3, slots_available)  # Schedule up to 3 or available slots per round
 
         # ELO-based matchmaking settings
         ELO_RANGE = 200  # Initial ELO range for matching
@@ -471,7 +510,7 @@ def schedule_round_robin():
                 break
 
             # Check if we can schedule any more matches
-            if server_slots_available <= 0 and local_slots_available <= 0:
+            if slots_available <= 0:
                 print(f"All match slots filled (scheduled {scheduled_count} this round)")
                 break
 
@@ -524,17 +563,12 @@ def schedule_round_robin():
                 white_agent = agent2
                 black_agent = agent1
 
-            # Determine match type and check appropriate limit
-            both_server = (white_agent['execution_mode'] == 'server' and black_agent['execution_mode'] == 'server')
-            mixed_match = (white_agent['execution_mode'] != black_agent['execution_mode'])
+            # Check if this match uses executor resources (not local-vs-local)
+            both_local = (white_agent['execution_mode'] == 'local' and black_agent['execution_mode'] == 'local')
 
-            # Check if we can schedule this match type
-            if both_server and server_slots_available <= 0:
-                # Server vs server full, skip
-                break
-
-            if mixed_match and local_slots_available <= 0:
-                # Local vs server full, skip
+            # Local-vs-local doesn't use executor slots
+            if not both_local and slots_available <= 0:
+                print(f"No executor slots available for this match type")
                 break
 
             # Create matchmaking game
@@ -547,11 +581,9 @@ def schedule_round_robin():
             new_match = cur.fetchone()
             conn.commit()
 
-            # Decrement appropriate slot counter
-            if both_server:
-                server_slots_available -= 1
-            elif mixed_match:
-                local_slots_available -= 1
+            # Decrement slot counter only if using executor resources
+            if not both_local:
+                slots_available -= 1
 
             # Update agent active match counts and re-sort
             for agent in all_agents:
@@ -648,7 +680,7 @@ def cleanup_stuck_matches():
             # Trigger rescheduling if any matchmaking games were cleaned up
             if any(m['match_type'] == 'matchmaking' for m in stuck_matches):
                 print("Triggering rescheduling after stuck match cleanup")
-                schedule_round_robin.delay()
+                schedule_round_robin.delay() if not is_tournament_time() else None
 
     except Exception as e:
         print(f"Error cleaning up stuck matches: {e}")
@@ -656,3 +688,17 @@ def cleanup_stuck_matches():
     finally:
         cur.close()
         conn.close()
+
+
+@app.task(name='tasks.match_runner.matchmaking_tick')
+def matchmaking_tick():
+    """
+    Called every 5 seconds by celery beat.
+    Runs regular matchmaking only if tournament has NOT started.
+    """
+    if is_tournament_time():
+        return  # Tournament is active, no regular matchmaking
+
+    # Run regular matchmaking
+    schedule_round_robin()
+    schedule_exhibition_matches()

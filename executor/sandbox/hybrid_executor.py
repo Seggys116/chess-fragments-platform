@@ -15,12 +15,12 @@ from constants import get_default_agent_var
 from extension.board_utils import list_legal_moves_for
 from samples import white as white_player_global, black as black_player_global
 
-REDIS_URL = 'redis://redis:6379'
+REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379')
 # Move timeout - read from environment
-AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
+AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '16.0'))
 # Server-side timeout: agent timeout + buffer for dispatch delays, network, and response routing
 # This accounts for: Redis queue delays, WebSocket forwarding, network latency
-# Agent still has strict 14s enforced locally - this just prevents premature server-side timeout
+# Agent still has strict 16s enforced locally - this just prevents premature server-side timeout
 MOVE_TIMEOUT = AGENT_TIMEOUT_SECONDS + 5.0  # 19s total server wait time
 
 # Game state cache: stores initial board + move history per game for local agents
@@ -135,6 +135,20 @@ class LocalAgentBridge:
         # Communication timeout - server didn't get a response in time
         elapsed = time.time() - start_time
         print(f"Move request communication timed out for local agent {agent_id}")
+
+        # Check if agent is still connected - if not, treat as disconnect not timeout
+        try:
+            agent_status = self.redis_client.hget(f'local_agent:{agent_id}', 'status')
+            # If status is None (key doesn't exist) or not connected/in_game, treat as disconnect
+            if not agent_status or (agent_status != 'connected' and agent_status != 'in_game'):
+                print(f"[HYRBIDF] timeout-disconnect agent={agent_id} status={agent_status or 'None'} (treating as disconnect not timeout)", flush=True)
+                raise AgentDisconnectedError(agent_id, game_id, 'Agent disconnected during move timeout')
+        except AgentDisconnectedError:
+            raise
+        except Exception as e:
+            print(f"[HYRBIDF] Failed to check agent connection status: {e}", flush=True)
+            # If we can't check status, assume it's a legitimate timeout rather than failing the match
+
         return (None, elapsed, True)
 
     def notify_game_start(self, agent_id: str, game_id: str, white: str, black: str):

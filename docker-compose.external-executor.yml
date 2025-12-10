@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  executor:
+    build:
+      context: .
+      dockerfile: ./executor/Dockerfile
+    environment:
+      # Connection to main server services
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@${MAIN_SERVER_IP}:5295/fragmentarena
+      REDIS_URL: redis://:${REDIS_PASSWORD}@${MAIN_SERVER_IP}:6380
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@${MAIN_SERVER_IP}:6380/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@${MAIN_SERVER_IP}:6380/1
+
+      # Agent execution limits
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-14}
+      AGENT_MEMORY_LIMIT_MB: ${AGENT_MEMORY_LIMIT_MB:-512}
+
+      # Executor configuration
+      EXECUTOR_IS_EXTERNAL: "true"
+      EXECUTOR_CONCURRENCY: ${EXECUTOR_CONCURRENCY:-8}
+      MATCHES_PER_EXECUTOR: ${MATCHES_PER_EXECUTOR:-4}
+      EXECUTOR_HEARTBEAT_INTERVAL: ${EXECUTOR_HEARTBEAT_INTERVAL:-10}
+
+      # Tournament mode (should match main server)
+      TOURNAMENT_NOW: ${TOURNAMENT_NOW:-false}
+
+    # Use host network for direct connection to main server
+    network_mode: host
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # For spawning agent containers
+
+    # Use unique hostname per replica: %h=hostname, %n=node number
+    # The $$ escapes the $ for docker-compose, UUID ensures uniqueness across restarts
+    command: >
+      sh -c 'celery -A worker worker
+      --loglevel=info
+      --concurrency=${EXECUTOR_CONCURRENCY:-8}
+      --pool=threads
+      -n external-$$HOSTNAME-$$(cat /proc/sys/kernel/random/uuid | cut -c1-8)@%h'
+
+    deploy:
+      replicas: ${EXECUTOR_REPLICAS:-1}
+
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "celery -A worker inspect ping -d celery@$$HOSTNAME || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

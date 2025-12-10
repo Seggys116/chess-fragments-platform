@@ -16,7 +16,7 @@ import psycopg2.extras
 import redis.asyncio as redis
 
 # Timeouts - all based on AGENT_TIMEOUT_SECONDS environment variable
-AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
+AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '16.0'))
 AUTH_TIMEOUT = AGENT_TIMEOUT_SECONDS * 3  # 3x agent timeout for authentication
 
 class LocalAgentTCPServer:

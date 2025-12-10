@@ -50,12 +50,16 @@ export async function GET(
     const whiteMoves = match.gameStates.filter((state) => state.moveNumber % 2 === 1);
     const blackMoves = match.gameStates.filter((state) => state.moveNumber % 2 === 0);
 
-    const whiteAvgTime = whiteMoves.length > 0
-      ? Math.round(whiteMoves.reduce((sum, m) => sum + (m.moveTimeMs || 0), 0) / whiteMoves.length)
+    // Exclude 0ms moves from average calculation (artifacts)
+    const validWhiteMoves = whiteMoves.filter(m => m.moveTimeMs && m.moveTimeMs > 0);
+    const validBlackMoves = blackMoves.filter(m => m.moveTimeMs && m.moveTimeMs > 0);
+
+    const whiteAvgTime = validWhiteMoves.length > 0
+      ? Math.round(validWhiteMoves.reduce((sum, m) => sum + (m.moveTimeMs || 0), 0) / validWhiteMoves.length)
       : null;
 
-    const blackAvgTime = blackMoves.length > 0
-      ? Math.round(blackMoves.reduce((sum, m) => sum + (m.moveTimeMs || 0), 0) / blackMoves.length)
+    const blackAvgTime = validBlackMoves.length > 0
+      ? Math.round(validBlackMoves.reduce((sum, m) => sum + (m.moveTimeMs || 0), 0) / validBlackMoves.length)
       : null;
 
     // Fetch ELO history for this match (if it exists)

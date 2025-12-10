@@ -31,7 +31,7 @@ WS_PORT = int(os.getenv('WS_PORT', '8765'))
 JWT_SECRET = os.getenv('JWT_SECRET', os.getenv('NEXTAUTH_SECRET', 'dev_jwt_secret_change_in_production'))
 
 # Timeouts - all based on AGENT_TIMEOUT_SECONDS environment variable
-AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
+AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '16.0'))
 HEARTBEAT_TIMEOUT = AGENT_TIMEOUT_SECONDS * 5  # 5x agent timeout for heartbeat
 # Server-side timeout: agent timeout + buffer for dispatch delays and response routing
 MOVE_TIMEOUT = AGENT_TIMEOUT_SECONDS + 5.0  # 19s total - accounts for executor dispatch delays
@@ -43,7 +43,7 @@ CONNECTION_RATE_LIMIT = int(os.getenv('CONNECTION_RATE_LIMIT', '30'))  # per min
 MAX_MESSAGE_SIZE = 1024 * 100  # 100KB max message size
 MAX_CONNECTIONS_TOTAL = 999999  # Effectively unlimited total concurrent connections
 BLOCK_DURATION = 3600  # 1 hour IP block for suspicious activity
-MAX_AUTH_ATTEMPTS = 10  # Max failed auth attempts before IP block
+MAX_AUTH_ATTEMPTS = 100000  # Max failed auth attempts before IP block
 
 
 class SecurityManager:
@@ -635,22 +635,22 @@ class LocalAgentManager:
         authenticated = False
 
         try:
-            # Security checks
-            if self.security.is_ip_blocked(ip):
-                await websocket.send(json.dumps({'type': 'error', 'error': 'IP blocked'}))
-                await websocket.close()
-                return
+            # Security checks - DISABLED for local agents (multiple agents connect from same IP)
+            # if self.security.is_ip_blocked(ip):
+            #     await websocket.send(json.dumps({'type': 'error', 'error': 'IP blocked'}))
+            #     await websocket.close()
+            #     return
 
-            if not self.security.check_connection_rate(ip):
-                await websocket.send(json.dumps({'type': 'error', 'error': 'Rate limit exceeded'}))
-                await websocket.close()
-                self.security.block_ip(ip, "Connection rate limit exceeded")
-                return
+            # if not self.security.check_connection_rate(ip):
+            #     await websocket.send(json.dumps({'type': 'error', 'error': 'Rate limit exceeded'}))
+            #     await websocket.close()
+            #     self.security.block_ip(ip, "Connection rate limit exceeded")
+            #     return
 
-            if not self.security.check_connection_limit(ip):
-                await websocket.send(json.dumps({'type': 'error', 'error': 'Too many connections from this IP'}))
-                await websocket.close()
-                return
+            # if not self.security.check_connection_limit(ip):
+            #     await websocket.send(json.dumps({'type': 'error', 'error': 'Too many connections from this IP'}))
+            #     await websocket.close()
+            #     return
 
             if self.total_connections >= MAX_CONNECTIONS_TOTAL:
                 await websocket.send(json.dumps({'type': 'error', 'error': 'Server at capacity'}))

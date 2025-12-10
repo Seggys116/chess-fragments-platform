@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { isTournamentLockActive } from '@/lib/tournament';
 import Link from 'next/link';
 import Navigation from '@/components/Navigation';
 import AnimatedBackground from '@/components/AnimatedBackground';
@@ -10,6 +11,7 @@ const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GiB
 
 export default function UploadPage() {
     const [accessCode, setAccessCode] = useState('');
+    const [now, setNow] = useState<Date>(new Date());
     const [userId, setUserId] = useState('');
     const [agentName, setAgentName] = useState('');
     const [uploadCode, setUploadCode] = useState('');
@@ -33,6 +35,12 @@ export default function UploadPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const [concurrencyWarning, setConcurrencyWarning] = useState('');
+    const isUploadFreezeDay = useMemo(() => isTournamentLockActive(now), [now]);
+
+    useEffect(() => {
+        const interval = setInterval(() => setNow(new Date()), 30000);
+        return () => clearInterval(interval);
+    }, []);
 
     useEffect(() => {
         const stored = localStorage.getItem('fragmentarena_code');
@@ -180,6 +188,10 @@ export default function UploadPage() {
     };
 
     const handleUpload = async () => {
+        if (isUploadFreezeDay) {
+            setError('Agent uploads are paused during the tournament window (locks 30 minutes before kickoff).');
+            return;
+        }
         if (!agentName || !code) {
             setError('Please provide both agent name and code');
             return;
@@ -317,6 +329,18 @@ export default function UploadPage() {
                     </div>
 
                     <div className="bg-gray-800/50 backdrop-blur rounded-xl border border-purple-500/20 p-8 shadow-2xl">
+                        {isUploadFreezeDay && (
+                            <div className="mb-6 bg-red-900/30 border border-red-500/40 rounded-lg p-4">
+                                <h3 className="text-red-200 font-semibold mb-2 flex items-center gap-2">
+                                    <AlertCircle className="w-5 h-5" />
+                                    Uploads paused for tournament window
+                                </h3>
+                                <p className="text-sm text-red-100">
+                                    Tournament focus mode locks uploads 30 minutes before kickoff and through completion. Please try again after the event window.
+                                </p>
+                            </div>
+                        )}
+
                         {/* Upload Notice */}
                         <div className="mb-6 bg-blue-900/20 border border-blue-500/30 rounded-lg p-4">
                             <h3 className="text-blue-300 font-semibold mb-2 flex items-center gap-2">
@@ -549,11 +573,12 @@ export default function UploadPage() {
                         {/* Upload Button */}
                         <button
                             onClick={handleUpload}
-                            disabled={loading || !agentName || !code}
-                            className={`w-full px-6 py-4 rounded-lg font-semibold text-lg transition-all duration-300 flex items-center justify-center gap-3 ${loading || !agentName || !code
+                            disabled={loading || !agentName || !code || isUploadFreezeDay}
+                            className={`w-full px-6 py-4 rounded-lg font-semibold text-lg transition-all duration-300 flex items-center justify-center gap-3 ${
+                                loading || !agentName || !code || isUploadFreezeDay
                                     ? 'bg-gray-700/50 text-gray-500 cursor-not-allowed'
                                     : 'bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50'
-                                }`}
+                            }`}
                         >
                             {loading ? (
                                 <>

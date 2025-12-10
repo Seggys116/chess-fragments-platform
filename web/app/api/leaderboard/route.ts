@@ -18,49 +18,34 @@ export async function GET(request: NextRequest) {
 
     const { limit, offset, includeInactive } = parsedQuery.data;
 
-    const where = {
-      gamesPlayed: {
-        gt: 0,
+    // Fetch all relevant rankings, then keep only the highest-ELO active version per agent
+    const rankings = await prisma.ranking.findMany({
+      where: {
+        gamesPlayed: { gt: 0 },
+        ...(includeInactive ? {} : { agent: { active: true } }),
       },
-      ...(includeInactive ? {} : {
-        agent: {
-          active: true,
-        },
-      }),
-    } as const;
+      include: { agent: true },
+      orderBy: { eloRating: 'desc' },
+    });
 
-    const [rankings, aggregates] = await Promise.all([
-      prisma.ranking.findMany({
-        where,
-        include: {
-          agent: true,
-        },
-        orderBy: {
-          eloRating: 'desc',
-        },
-        take: limit,
-        skip: offset,
-      }),
-      prisma.ranking.aggregate({
-        where,
-        _count: true,
-        _max: {
-          eloRating: true,
-        },
-        _sum: {
-          gamesPlayed: true,
-        },
-        _avg: {
-          avgMoveTimeMs: true,
-        },
-      }),
-    ]);
+    const bestActiveByAgent = new Map<string, typeof rankings[number]>();
+    for (const ranking of rankings) {
+      // Only consider active agent versions, and keep the highest ELO instance
+      if (!ranking.agent.active) continue;
+      const existing = bestActiveByAgent.get(ranking.agentId);
+      if (!existing || ranking.eloRating > existing.eloRating) {
+        bestActiveByAgent.set(ranking.agentId, ranking);
+      }
+    }
 
-    const total = typeof aggregates._count === 'number'
-      ? aggregates._count
-      : aggregates._count?._all ?? 0;
+    const bestRankings = Array.from(bestActiveByAgent.values()).sort(
+      (a, b) => b.eloRating - a.eloRating
+    );
 
-    const leaderboard = rankings.map((ranking, index) => ({
+    const total = bestRankings.length;
+    const paged = bestRankings.slice(offset, offset + limit);
+
+    const leaderboard = paged.map((ranking, index) => ({
       rank: offset + index + 1,
       agentId: ranking.agentId,
       agentName: ranking.agent.name,
@@ -80,6 +65,14 @@ export async function GET(request: NextRequest) {
       lastUpdated: ranking.lastUpdated,
     }));
 
+    const totalGames = bestRankings.reduce((sum, r) => sum + r.gamesPlayed, 0);
+    const moveTimes = bestRankings
+      .map(r => r.avgMoveTimeMs)
+      .filter((v): v is number => v !== null);
+    const avgMoveTimeMs = moveTimes.length
+      ? moveTimes.reduce((sum, v) => sum + v, 0) / moveTimes.length
+      : null;
+
     return NextResponse.json({
       success: true,
       leaderboard,
@@ -87,9 +80,9 @@ export async function GET(request: NextRequest) {
       limit,
       offset,
       stats: {
-        highestElo: aggregates._max?.eloRating ?? null,
-        totalGames: aggregates._sum?.gamesPlayed ?? 0,
-        avgMoveTimeMs: aggregates._avg?.avgMoveTimeMs ?? null,
+        highestElo: bestRankings[0]?.eloRating ?? null,
+        totalGames,
+        avgMoveTimeMs,
       },
     });
   } catch (error) {

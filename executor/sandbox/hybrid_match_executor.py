@@ -21,11 +21,11 @@ from chessmaker.chess.base import Board, Player
 from extension.board_utils import copy_piece_move, list_legal_moves_for
 from extension.board_rules import get_result, GAME_TIME_BUDGET
 from samples import white, black
-from constants import get_default_agent_var
+from constants import get_default_agent_var, AGENT_TOLD_TIMEOUT, cap_move_time
 from sandbox.hybrid_executor import AgentDisconnectedError, LocalAgentBridge, get_agent_move, clear_game_state, add_move_to_history, init_game_state
 
 # Agent timeout in seconds - read from environment
-AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '14.0'))
+AGENT_TIMEOUT_SECONDS = float(os.getenv('AGENT_TIMEOUT_SECONDS', '16.0'))
 # Add buffer for network/system overhead when checking timeouts
 # 1.0s buffer accounts for: network latency, board reconstruction, message serialization
 TIMEOUT_CHECK_BUFFER = 1.0
@@ -35,9 +35,13 @@ TOTAL_GAME_TIME_LIMIT = GAME_TIME_BUDGET
 
 def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_name,
                      black_agent_id, black_code, black_execution_mode, black_name,
-                     board_sample, match_id):
+                     board_sample, match_id, on_move_callback=None):
     """
     Run a match between two agents (local and/or server)
+
+    Args:
+        on_move_callback: Optional callback(move_number, board_state, move_time_ms, notation)
+                         Called after each move for live updates
 
     Returns same format as run_match_local:
         {
@@ -133,7 +137,7 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
 
     turn_order = cycle(players)
     moves = 0
-    max_moves = 500
+    max_moves = 150
     game_states = []
     result = None
 
@@ -191,7 +195,7 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                         execution_mode=white_execution_mode,
                         board=board,
                         player=player,
-                        var=[white_ply, AGENT_TIMEOUT_SECONDS],
+                        var=[white_ply, AGENT_TOLD_TIMEOUT],
                         game_id=match_id,
                         agent_func=white_agent_func
                     )
@@ -208,7 +212,7 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                     break
                 p_piece = piece
                 p_move_opt = move
-                move_time_ms = elapsed * 1000  # Convert to ms
+                move_time_ms = cap_move_time(int(elapsed * 1000))  # Convert to ms and cap
                 # Timeout if: agent explicitly reported timeout OR elapsed exceeds threshold
                 timed_out = explicit_timeout or (elapsed > AGENT_TIMEOUT_SECONDS + TIMEOUT_CHECK_BUFFER)
 
@@ -234,7 +238,7 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                         execution_mode=black_execution_mode,
                         board=board,
                         player=player,
-                        var=[black_ply, AGENT_TIMEOUT_SECONDS],
+                        var=[black_ply, AGENT_TOLD_TIMEOUT],
                         game_id=match_id,
                         agent_func=black_agent_func
                     )
@@ -251,7 +255,7 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                     break
                 p_piece = piece
                 p_move_opt = move
-                move_time_ms = elapsed * 1000  # Convert to ms
+                move_time_ms = cap_move_time(int(elapsed * 1000))  # Convert to ms and cap
                 # Timeout if: agent explicitly reported timeout OR elapsed exceeds threshold
                 timed_out = explicit_timeout or (elapsed > AGENT_TIMEOUT_SECONDS + TIMEOUT_CHECK_BUFFER)
 
@@ -394,6 +398,13 @@ def run_hybrid_match(white_agent_id, white_code, white_execution_mode, white_nam
                 'move_time_ms': int(move_time_ms),
                 'notation': notation,
             })
+
+            # Call live update callback if provided
+            if on_move_callback:
+                try:
+                    on_move_callback(moves, board_state, int(move_time_ms), notation)
+                except Exception as cb_err:
+                    print(f"[HYBRID] Live callback error on move {moves}: {cb_err}")
 
             # Check for checkmate/stalemate on next player's turn
             # We already called next(turn_order) at the start of the loop for the current player

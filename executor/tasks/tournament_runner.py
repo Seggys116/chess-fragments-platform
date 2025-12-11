@@ -380,8 +380,13 @@ def schedule_tournament_bracket(bracket_id: str, max_concurrent: int = None):
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     try:
-        # Force 1 match per bracket at a time
-        max_concurrent = 1
+        # Set concurrent matches per bracket:
+        # Elite/Challenger (25% brackets): 2 matches
+        # Contender (50% bracket): 3 matches
+        if bracket_id == 'contender':
+            max_concurrent = 3
+        else:
+            max_concurrent = 2
         print(f"[SWISS] max_concurrent set to {max_concurrent} for {bracket_id}")
 
         bracket_agents = get_bracket_agents(cur, bracket_id)
